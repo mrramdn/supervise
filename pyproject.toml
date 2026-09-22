@@ -1,0 +1,68 @@
+[project]
+name = "supervise"
+version = "0.0.0"
+description = "Checkpointed plan, implement, verify, and independent review workflow for Claude Code, backed by a local append-only run ledger."
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "mrramdn" }]
+requires-python = ">=3.11"
+# The core CLI is stdlib-only; it has no runtime dependencies on purpose.
+dependencies = []
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Software Development :: Quality Assurance",
+]
+
+[dependency-groups]
+dev = [
+  "coverage[toml]>=7.6",
+  "hypothesis>=6.100",
+  "pyright>=1.1.390",
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+
+[tool.uv]
+# The plugin runs from source through bin/supervisectl; nothing is built or installed.
+package = false
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "S"]
+ignore = ["PTH123"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S603"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+include = ["src", "scripts", "tests"]
+exclude = ["**/__pycache__", ".venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/supervise"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
