@@ -1,0 +1,11 @@
+{
+  "name": "supervise",
+  "version": "0.0.0",
+  "description": "Checkpointed plan, implement, verify, and independent review workflow for Claude Code, backed by a local append-only run ledger and acceptance rules enforced by a CLI.",
+  "author": {
+    "name": "mrramdn"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/mrramdn/supervise",
+  "keywords": ["workflow", "code-review", "verification", "checkpoint", "audit-trail", "hooks"]
+}

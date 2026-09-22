@@ -1,0 +1,14 @@
+{
+  "name": "supervise",
+  "owner": {
+    "name": "mrramdn"
+  },
+  "description": "Marketplace for the supervise Claude Code plugin.",
+  "plugins": [
+    {
+      "name": "supervise",
+      "source": "./",
+      "description": "Checkpointed plan, implement, verify, and independent review workflow with a local run ledger."
+    }
+  ]
+}
