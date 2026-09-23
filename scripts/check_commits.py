@@ -1,64 +1,214 @@
 #!/usr/bin/env python3
 """Check commit messages: Conventional Commits header and no AI attribution.
 
-Used by the local ``commit-msg`` git hook (``--msg-file``) and by CI
-(``--range``). Exit status is 0 when every message passes, 1 otherwise.
+Modes:
+  --msg-file FILE   local commit-msg hook (the message git is about to store)
+  --range RANGE     CI and pre-merge check of stored commits (strict)
+  --message TEXT    ad-hoc check
+  --install-hook    copy this checker into the repository's hooks directory
+                    and install a commit-msg hook that runs the copy
+
+Exit status is 0 when every message passes, 1 otherwise.
 """
 
 from __future__ import annotations
 
 import argparse
 import re
+import shlex
+import shutil
 import subprocess
 import sys
+import unicodedata
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 TYPES = ("feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert")
 HEADER_RE = re.compile(
-    r"^(?P<type>" + "|".join(TYPES) + r")(?:\((?P<scope>[a-z0-9][a-z0-9._/-]*)\))?(?P<breaking>!)?: (?P<subject>\S.*)$"
+    r"^(?P<type>"
+    + "|".join(TYPES)
+    + r")(?:\((?P<scope>[A-Za-z0-9][A-Za-z0-9._/-]*)\))?(?P<breaking>!)?: (?P<subject>\S.*)$"
 )
 MAX_HEADER = 100
-# Messages git writes itself; they are not authored headers.
-GIT_GENERATED_RE = re.compile(r'^(Merge (branch|pull request|remote-tracking branch|tag|commit) |Revert ")')
+MERGE_RE = re.compile(r"^Merge (branch|branches|pull request|remote-tracking branch|tag|commit) ")
+REVERT_RE = re.compile(r'^Revert ".+"$')
+REVERT_BODY_RE = re.compile(r"^This reverts commit [0-9a-f]{7,64}\b", re.M)
 AUTOSQUASH_RE = re.compile(r"^(fixup|squash|amend)! ")
+# Git writes this pair when the editor shows the diff (commit -v); everything below it is dropped.
 SCISSORS = "# ------------------------ >8 ------------------------"
+SCISSORS_NOTE = "# Do not modify or remove the line above."
 
-AI_IDENTITY = (
-    r"claude|anthropic|fable|opus|sonnet|haiku|openai|chatgpt|gpt-?\d|copilot|codex|gemini|"
-    r"cursor|devin|aider|windsurf|\[bot\]|\bbot\b|\bai\b"
-)
-ATTRIBUTION_RES = (
-    (re.compile(r"^co-authored-by:.*(" + AI_IDENTITY + ")", re.I | re.M), "AI co-author trailer"),
-    (re.compile(r"^.*generated (with|by)\b.*(" + AI_IDENTITY + ")", re.I | re.M), '"Generated with/by" AI attribution'),
-    (re.compile(r"\U0001f916"), "robot emoji attribution"),
-    (re.compile(r"claude\.(com|ai)/(claude-)?code", re.I), "link to an AI coding tool"),
-    (re.compile(r"noreply@anthropic\.com", re.I), "Anthropic noreply address"),
-    (re.compile(r"^(assisted|written|authored)-by:.*(" + AI_IDENTITY + ")", re.I | re.M), "AI assistance trailer"),
-    (re.compile(r"\bai[- ](generated|assisted)\b", re.I), "AI-generated/assisted label"),
+# --- normalisation ---------------------------------------------------------------------------------------------------
+
+_INVISIBLE = dict.fromkeys(map(ord, "\u00ad\u200b\u200c\u200d\u2060\ufeff"))
+_DASHES = dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe58\ufe63\uff0d"), "-")
+# Cyrillic and Greek letters that render like Latin ones.
+_CONFUSABLES = str.maketrans(
+    "\u0410\u0412\u0421\u0415\u041d\u0406\u0408\u041a\u041c\u041e\u0420\u0405\u0422\u0425\u0423\u0430\u0441\u0435\u0456\u0458\u043e\u0440\u0455\u0445\u0443\u0501\u04bb\u04cf\u0391\u0392\u0395\u0396\u0397\u0399\u039a\u039c\u039d\u039f\u03a1\u03a4\u03a5\u03a7\u03bf\u03b9\u03bd\u03b1",
+    "ABCEHIJKMOPSTXYaceijopsxydhlABEZHIKMNOPTYXoiva",
 )
 
 
-def clean(message: str) -> str:
-    """Drop what git's default cleanup would drop: scissors section and comment lines."""
-    if SCISSORS in message:
-        message = message.split(SCISSORS, 1)[0]
-    lines = [line.rstrip() for line in message.splitlines() if not line.startswith("#")]
-    return "\n".join(lines).strip("\n")
+def normalize(text: str) -> str:
+    """Fold look-alike characters so attribution checks see what a reader sees."""
+    text = unicodedata.normalize("NFKC", text)
+    return text.translate(_INVISIBLE).translate(_DASHES).translate(_CONFUSABLES)
 
 
-def check_message(message: str, *, allow_autosquash: bool = True) -> list[str]:
-    """Return a list of problems; an empty list means the message is acceptable."""
-    text = clean(message)
-    if not text.strip():
-        return ["empty commit message"]
-    lines = text.splitlines()
-    header = lines[0]
+# --- AI attribution --------------------------------------------------------------------------------------------------
+
+AI_WORD = (
+    r"(?:claude|anthropic|openai|chatgpt|gpt-?\d[\w.-]*|copilot|codex|gemini|cursor|devin|aider|windsurf|"
+    r"fable|opus|sonnet|haiku|llms?|ai)"
+)
+AI_WORD_RE = re.compile(r"\b" + AI_WORD + r"\b", re.I)
+# A trailer value naming an AI tool as a person, e.g. "Claude <noreply@anthropic.com>" or "GitHub Copilot".
+# Human names that merely start with such a word ("Claude Dupont", "Devin Park") do not match.
+AI_NAME_RE = re.compile(
+    r"(?:github\s+)?copilot(?:\s+[\w.-]+)*"
+    r"|claude(?:\s+(?:code|ai|opus|sonnet|haiku|fable|instant|\d[\w.]*)(?:[\s\w.-]*))?"
+    r"|anthropic(?:\s+[\w.-]+)*"
+    r"|(?:openai\s+)?(?:chatgpt|codex|gpt-?\d[\w.-]*)(?:\s+[\w.-]+)*"
+    r"|openai(?:\s+[\w.-]+)*"
+    r"|(?:google\s+)?gemini(?:\s+[\w.-]+)*"
+    r"|cursor(?:\s+(?:agent|ai|bot))?"
+    r"|devin(?:\s+ai)?"
+    r"|aider(?:\s+[\w.-]+)*"
+    r"|windsurf(?:\s+[\w.-]+)*"
+    r"|[\w.-]*\[bot\]",
+    re.I,
+)
+AI_EMAIL_DOMAINS = ("anthropic.com", "openai.com", "cursor.com", "cursor.sh", "cognition.ai", "codeium.com")
+# Trailer keys that credit a person; rejected only when the value is an AI identity.
+IDENTITY_KEYS = frozenset(
+    {
+        "co-authored-by",
+        "co-developed-by",
+        "signed-off-by",
+        "reviewed-by",
+        "helped-by",
+        "tested-by",
+        "acked-by",
+        "suggested-by",
+        "reported-by",
+        "authored-by",
+        "written-by",
+    }
+)
+# Trailer keys that only exist to credit tools; rejected when the value mentions an AI tool at all.
+TOOL_KEYS = frozenset({"assisted-by", "generated-by", "generated-with", "made-with", "created-with", "built-with"})
+TRAILER_RE = re.compile(r"^\s*#?\s*([A-Za-z][A-Za-z0-9 _-]*?)\s*:\s*(\S.*)$")
+_CREDIT = (
+    r"(?:(?:partly|partially|fully|mostly|entirely|largely)\s+)?"
+    r"(?:generated|created|written|made|built|authored|drafted|produced|assisted|co-written|pair[- ]programmed)\s+"
+    r"(?:with|by|using|via|through|in)\s+(?:the\s+help\s+of\s+|help\s+from\s+|assistance\s+from\s+)?"
+    r"(?:an?\s+|the\s+)?[\[(\"'*_]*" + AI_WORD + r"\b"
+)
+PROSE_RES = (
+    # Sentence-initial credit: "Generated with [Claude Code]", "Written by Claude", "Pair-programmed with Cursor",
+    # "This commit was generated by an LLM". Technical prose ("the payload generated by Claude Code") passes.
+    re.compile(
+        r"(?:^|[.!?]\s+)[^\w\s]*\s*"
+        r"(?:(?:this|the)\s+(?:commit|change|patch|code|diff|message|pr|pull\s+request)\s+(?:was|is|has\s+been)\s+)?"
+        + _CREDIT,
+        re.I | re.M,
+    ),
+    # Parenthetical or dash-separated credit: "fix: x (generated with Claude Code)", "feat: x - made with Cursor".
+    re.compile(r"(?:[(\[]|\s-\s)\s*" + _CREDIT, re.I),
+    re.compile(
+        r"\b(?:this|the)\s+(?:commit|change|patch|code|diff|message|pr)\s+(?:is|was|has\s+been)\s+"
+        r"(?:(?:partly|partially|fully|mostly|entirely|largely)\s+)?ai-(?:generated|assisted|written)\b",
+        re.I,
+    ),
+    re.compile(r"^[^\w\n]*ai-(?:generated|assisted|written)[^\w\n]*$", re.I | re.M),
+    re.compile(r"\[claude\s+code\]\(https?://(?:www\.)?claude\.(?:com|ai)/[^)]*\)", re.I),
+    re.compile("\U0001f916"),
+)
+BACKTICK_SPAN_RE = re.compile(r"`[^`\n]*`")
+
+
+def is_ai_identity(value: str) -> bool:
+    match = re.match(r"^(.*?)\s*<([^>]*)>\s*$", value.strip())
+    name, email = (match.group(1), match.group(2).lower()) if match else (value.strip(), "")
+    local, _, domain = email.rpartition("@")
+    if domain and any(domain == d or domain.endswith("." + d) for d in AI_EMAIL_DOMAINS):
+        return True
+    if domain == "users.noreply.github.com" and re.search(r"copilot|claude|codex|\[bot\]", local):
+        return True
+    return bool(AI_NAME_RE.fullmatch(name.strip().strip("\"'")))
+
+
+def attribution_problems(text: str) -> list[str]:
+    text = normalize(text)
     problems: list[str] = []
+    for line in text.splitlines():
+        trailer = TRAILER_RE.match(line)
+        if not trailer:
+            continue
+        key = re.sub(r"[\s_]+", "-", trailer.group(1).strip().lower())
+        value = trailer.group(2).strip()
+        if key in IDENTITY_KEYS and is_ai_identity(value):
+            problems.append(f"AI attribution is not allowed ({key} trailer names an AI tool): {line.strip()!r}")
+        elif (key in TOOL_KEYS or key.startswith("ai-")) and (key.startswith("ai-") or AI_WORD_RE.search(value)):
+            problems.append(f"AI attribution is not allowed ({key} trailer): {line.strip()!r}")
+    prose = BACKTICK_SPAN_RE.sub(" ", text)
+    for paragraph in re.split(r"\n\s*\n", prose):
+        flat = re.sub(r"[ \t]*\n[ \t]*", " ", paragraph) if not paragraph.lstrip().startswith("#") else paragraph
+        for pattern in PROSE_RES:
+            match = pattern.search(flat)
+            if match:
+                problems.append(f"AI attribution is not allowed: {match.group(0).strip()!r}")
+                break
+    return problems
 
-    if not GIT_GENERATED_RE.match(header):
+
+# --- structure -------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Context:
+    """What the caller knows about the commit being checked."""
+
+    stored: bool = False  # message is already in history (range mode): check it verbatim
+    is_merge: bool = False  # the commit has two or more parents / a merge is in progress
+    allow_autosquash: bool = True
+
+
+def cut_scissors(message: str) -> str:
+    lines = message.splitlines()
+    for i, line in enumerate(lines[:-1]):
+        if line == SCISSORS and lines[i + 1].startswith(SCISSORS_NOTE):
+            return "\n".join(lines[:i])
+    return message
+
+
+def check_message(message: str, ctx: Context | None = None) -> list[str]:
+    """Return a list of problems; an empty list means the message is acceptable."""
+    ctx = ctx or Context()
+    text = message if ctx.stored else cut_scissors(message)
+    lines = text.strip("\n").splitlines()
+    if not ctx.stored:
+        # Before storing, git drops '#' lines only when the editor was used; judge structure on that view,
+        # but refuse a first line that git would keep as the subject under -m/-F.
+        if lines and lines[0].startswith("#") and any(line.strip() and not line.startswith("#") for line in lines):
+            return ["the first line starts with '#'; git keeps it as the subject when the message is not edited"]
+        lines = [line for line in lines if not line.startswith("#")]
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    if not any(line.strip() for line in lines):
+        return ["empty commit message"]
+
+    header = lines[0].rstrip()
+    body = "\n".join(lines[1:])
+    problems: list[str] = []
+    git_generated = (MERGE_RE.match(header) and ctx.is_merge) or (
+        REVERT_RE.match(header) and REVERT_BODY_RE.search(body)
+    )
+    if not git_generated:
         subject = header
         if AUTOSQUASH_RE.match(subject):
-            if not allow_autosquash:
+            if not ctx.allow_autosquash:
                 problems.append(f"autosquash commit must be squashed before merging: {header!r}")
             subject = AUTOSQUASH_RE.sub("", subject, count=1)
         if not HEADER_RE.match(subject):
@@ -69,45 +219,89 @@ def check_message(message: str, *, allow_autosquash: bool = True) -> list[str]:
             problems.append(f"header is {len(header)} characters; the limit is {MAX_HEADER}")
         if len(lines) > 1 and lines[1].strip():
             problems.append("the second line must be blank (separate header and body)")
-
-    for pattern, label in ATTRIBUTION_RES:
-        match = pattern.search(text)
-        if match:
-            problems.append(f"AI attribution is not allowed ({label}): {match.group(0).strip()!r}")
+    problems.extend(attribution_problems(text))
     return problems
 
 
-def messages_in_range(rev_range: str) -> Iterable[tuple[str, str]]:
-    shas = subprocess.run(
-        ["git", "rev-list", "--reverse", rev_range], check=True, capture_output=True, text=True
-    ).stdout.split()
-    for sha in shas:
-        body = subprocess.run(
-            ["git", "log", "-1", "--format=%B", sha], check=True, capture_output=True, text=True
-        ).stdout
-        yield sha[:12], body
+def identity_problems(label: str, actual: str, expected: str) -> list[str]:
+    return [] if actual == expected else [f"{label} is {actual!r}, expected {expected!r}"]
+
+
+# --- git plumbing ----------------------------------------------------------------------------------------------------
+
+
+def git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def ident_without_date(ident: str) -> str:
+    return re.sub(r"\s+\d+\s+[+-]\d{4}\s*$", "", ident.strip())
+
+
+def stored_commits(rev_range: str, expect_identity: str | None) -> Iterable[tuple[str, list[str]]]:
+    for sha in git("rev-list", "--reverse", rev_range).split():
+        fields = git("log", "-1", "--format=%P%x00%an <%ae>%x00%cn <%ce>%x00%B", sha).split("\0", 3)
+        parents, author, committer, body = fields[0].split(), fields[1], fields[2], fields[3]
+        ctx = Context(stored=True, is_merge=len(parents) > 1, allow_autosquash=False)
+        problems = check_message(body.rstrip("\n"), ctx)
+        if expect_identity:
+            problems += identity_problems("author", author, expect_identity)
+            problems += identity_problems("committer", committer, expect_identity)
+        yield sha[:12], problems
+
+
+def pending_commit(msg_file: str, expect_identity: str | None) -> list[str]:
+    message = Path(msg_file).read_text(encoding="utf-8")
+    merge_head = Path(git("rev-parse", "--git-path", "MERGE_HEAD").strip())
+    problems = check_message(message, Context(is_merge=merge_head.exists()))
+    if expect_identity:
+        problems += identity_problems("author", ident_without_date(git("var", "GIT_AUTHOR_IDENT")), expect_identity)
+        problems += identity_problems(
+            "committer", ident_without_date(git("var", "GIT_COMMITTER_IDENT")), expect_identity
+        )
+    return problems
+
+
+def install_hook(expect_identity: str | None) -> Path:
+    hooks = Path(git("rev-parse", "--git-path", "hooks").strip())
+    hooks.mkdir(parents=True, exist_ok=True)
+    checker = hooks / "check_commits.py"
+    shutil.copyfile(__file__, checker)
+    extra = f" --expect-identity {shlex.quote(expect_identity)}" if expect_identity else ""
+    hook = hooks / "commit-msg"
+    hook.write_text(
+        "#!/bin/sh\n"
+        "# Installed by scripts/check_commits.py --install-hook; reinstall after changing the checker.\n"
+        f'exec python3 "$(dirname "$0")/check_commits.py" --msg-file "$1"{extra}\n',
+        encoding="utf-8",
+    )
+    for path in (checker, hook):
+        path.chmod(0o755)  # git only runs executable hooks
+    return hook
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--msg-file", help="commit message file (commit-msg hook argument)")
     source.add_argument("--range", dest="rev_range", help="git revision range to check, e.g. main..HEAD")
     source.add_argument("--message", help="check this message text")
+    source.add_argument("--install-hook", action="store_true", help="install the commit-msg hook")
+    parser.add_argument("--expect-identity", help='require author and committer "Name <email>"')
     args = parser.parse_args(argv)
 
+    if args.install_hook:
+        print(f"installed {install_hook(args.expect_identity)}")
+        return 0
     if args.msg_file:
-        with open(args.msg_file, encoding="utf-8") as fh:
-            items: Iterable[tuple[str, str]] = [("message", fh.read())]
-        allow_autosquash = True
+        results: Iterable[tuple[str, list[str]]] = [("message", pending_commit(args.msg_file, args.expect_identity))]
     elif args.message is not None:
-        items, allow_autosquash = [("message", args.message)], True
+        results = [("message", check_message(args.message))]
     else:
-        items, allow_autosquash = messages_in_range(args.rev_range), False
+        results = stored_commits(args.rev_range, args.expect_identity)
 
     failed = 0
-    for label, message in items:
-        problems = check_message(message, allow_autosquash=allow_autosquash)
+    for label, problems in results:
         if problems:
             failed += 1
             print(f"commit check failed for {label}:", file=sys.stderr)
