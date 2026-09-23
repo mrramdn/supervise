@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.0.0] - 2026-09-24
+
+### Added
+
+- `supervisectl commit -m MSG` commits exactly the accepted tree, only when the user asks. It refuses when the
+  working tree changed since `accept`, when the message is not a Conventional Commit or carries AI attribution, and
+  when the run was already committed. Repository hooks run as usual.
+- `review record --findings <file|->` records the orchestrator's transcription of a reviewer reply that has no
+  findings JSON. The review is marked transcribed and the reply is saved as `review-N-reply.md` next to the diff.
+- Findings with `"kind": "acceptance"` (an acceptance criterion of the plan that is not met or not shown) block
+  `accept` at any severity.
+- The reviewer brief lists the gate results and the subtask notes.
+- README and this changelog.
+
+### Changed
+
+- `review record` waits up to 15 seconds (`--wait S`) for the reviewer's SubagentStop event, which can arrive a few
+  seconds after the reviewer's reply.
+- After a clean review, the skill accepts and reports the non-blocking findings instead of fixing them. A `fix`
+  after a clean review, to apply non-blocking suggestions when the user asks, uses no fix round.
+- `init` takes the package runner from the `packageManager` field of `package.json` before looking at lockfiles.
+- The code-reviewer agent's output instructions are stricter: every finding goes into one JSON block that ends
+  the reply.
+
+### Fixed
+
+- Reviewer findings were lost when the reviewer handed its report back through a tool call: the hook now reads
+  the handed-back report from the subagent transcript instead of the closing note.
+- Only a `{"findings": [...]}` object that ends the reply is parsed, fenced or not, so a quoted example in prose is
+  no longer read as a clean review.
+- SubagentStop events without an agent type, which Claude Code sends while a subagent runs, are no longer
+  recorded.
+
+## [0.1.0] - 2026-09-23
+
+### Added
+
+- The `supervise` skill: a plan, implement, verify, review loop driven through the CLI.
+- `supervisectl`, a standard-library Python CLI that keeps the run state in `.supervise/` and checks every phase
+  change: `init`, `start`, `status`, `plan set`, `subtask add|done`, `verify`, `review begin|record`, `fix`,
+  `accept`, `report`, `pause`, `resume`, `abort`, and `override`.
+- Gate detection from `Makefile`, `package.json`, and `pyproject.toml`, with a baseline run at `start`.
+- `accept` only when the last verify passed and a clean independent review ran on the same working-tree
+  fingerprint as the current tree.
+- NO TESTS label for projects without a test gate, a fix-round cap that escalates the run, and a
+  `self`-review path limited to diffs of at most 10 lines.
+- Agents `supervise:code-reviewer` (read-only) and `supervise:implementer`.
+- Hooks: PreToolUse denies `supervisectl override` to the model; SubagentStop records finished reviewers as
+  review evidence.
+- End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
+
+[1.0.0]: https://github.com/mrramdn/supervise/compare/supervise--v0.1.0...supervise--v1.0.0
+[0.1.0]: https://github.com/mrramdn/supervise/releases/tag/supervise--v0.1.0
