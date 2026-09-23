@@ -1,0 +1,99 @@
+---
+name: supervise
+description: Checkpointed coding workflow (plan, implement, verify with the project's gates, then an independent read-only review). The bundled supervisectl CLI checks every phase change and accepts only when the gates pass and the review is clean for the exact final working tree; state survives restarts. Use when asked to supervise a task, carry a multi-file change through verification and review, or resume or report a supervise run. Not for quick edits or questions.
+argument-hint: "<task> | status | resume | report"
+allowed-tools: Bash(supervisectl *)
+license: MIT
+compatibility: Needs git and Python 3.11+ on Linux or macOS.
+disable-model-invocation: false
+---
+
+# supervise
+
+You do the work; `supervisectl` keeps the run state and decides whether each phase change is allowed. It is on
+PATH in Bash while the plugin is enabled. When it refuses (exit 2), it names the rule that failed and the next
+step, and nothing was changed, so follow its output rather than working around it.
+
+## Start or resume
+
+1. Run `supervisectl status`.
+   - An open run: continue from the phase it shows (`supervisectl resume` if it is paused). If the user now asks
+     for a different task, ask whether to finish or abort the open run first.
+   - Not initialized: run `supervisectl init` and show the user the gates it detected. The gates decide what
+     "verified" means, so let the user correct `.supervise/config.toml` before starting.
+2. `supervisectl start "<task>"` runs the gates once to record the baseline: what already fails before you touch
+   anything.
+3. Check that the Agent tool offers `supervise:code-reviewer` (and `supervise:implementer`). If it does not, stop
+   and tell the user the plugin's agents did not load. Do not substitute `general-purpose` or another agent: only
+   a finished `supervise:code-reviewer` counts as a review, so a substitute would only waste a round.
+
+If every `supervisectl` call asks for permission, suggest the user allow `Bash(supervisectl *)` in their
+settings; the skill's own grant ends with the turn that invoked it.
+
+## Checklist
+
+Copy this into your task list and keep it current:
+
+```
+- [ ] supervisectl status (init + start, or resume)
+- [ ] plan set
+- [ ] implement; subtask done as each subtask lands
+- [ ] verify
+- [ ] review begin, supervise:code-reviewer, review record
+- [ ] accept, or fix, then verify and review again
+- [ ] report to the user
+```
+
+## Phases
+
+Say one sentence of progress at every phase change.
+
+**Plan.** Read what you need, then split the task into subtasks with acceptance criteria. Pass the plan on stdin
+so no plan file lands in the working tree (it would become part of the reviewed diff):
+
+```bash
+supervisectl plan set - <<'EOF'
+{"summary": "...", "subtasks": [{"title": "...", "acceptance": "..."}]}
+EOF
+```
+
+**Implement.** Do the work yourself. Spawn `supervise:implementer` only for a large subtask that is independent of
+the rest, and give it the subtask, the files involved, and the acceptance criteria. Run the relevant tests as you
+go. Mark progress with `supervisectl subtask done <id>`. If the user asks for something new mid-run, record it
+with `supervisectl subtask add "<title>" --origin user`; that returns the run to implementing without using a
+fix round.
+
+**Verify.** `supervisectl verify` runs every gate and compares failures with the baseline. It takes as long as the
+project's checks, so give the Bash call a generous timeout. Verification is the CLI's job; do not hand it to a
+subagent. A gate that already failed at baseline passes only if its output is unchanged.
+
+**Review.** `supervisectl review begin` writes the diff and prints a brief. Call the Agent tool with
+`subagent_type: "supervise:code-reviewer"` and that brief. When it finishes, run `supervisectl review record`;
+the CLI reads the reviewer's findings from the hook and decides which ones block. Keep your hands off the files
+from `review begin` until `accept`: any edit changes the tree fingerprint and accept will refuse.
+A diff of at most 10 lines since the last independent review may be reviewed by you instead:
+`supervisectl review record --self --reason "<why>" --findings -` with `{"findings": [...]}` on stdin. The report
+lists every self-review.
+
+**Fix.** After a failed verify or a blocking review, run `supervisectl fix` before you change code. It counts the
+fix round and lists what to repair. Then repair, `verify`, and review again.
+
+**Accept.** `supervisectl accept` succeeds only when the last verify passed, the last review is clean, and both
+saw exactly the current working tree.
+
+## Escalation, pause, abort
+
+- Escalated (the fix rounds ran out): stop and tell the user what still fails. Only they can grant more rounds, by
+  typing `! supervisectl override --max-fix-rounds <N> --reason "<why>"` in the prompt; a hook refuses `override`
+  from you. After they do, run `supervisectl status` before continuing.
+- Before ending a session mid-run, `supervisectl pause`. Any later session continues with `supervisectl resume`.
+- `supervisectl abort --reason "<why>"` only when the user drops the task.
+
+## Finishing
+
+- End with `supervisectl report` and summarize it for the user: what changed, the gate results, the review
+  verdict, and anything not done.
+- If the run is labelled NO TESTS, say so plainly: passing gates without a test gate do not show the change works.
+- Stay within the requested scope. List what you left out or could not finish rather than stretching the task.
+
+Commands, exit codes, and file formats: [references/cli.md](references/cli.md).

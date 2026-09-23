@@ -8,7 +8,7 @@
     {
       "name": "supervise",
       "source": "./",
-      "description": "Checkpointed plan, implement, verify, and independent review workflow with a local run ledger."
+      "description": "Checkpointed plan, implement, verify, and independent review workflow with CLI-enforced acceptance."
     }
   ]
 }
