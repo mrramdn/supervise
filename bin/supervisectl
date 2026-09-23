@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+"""Launcher for supervisectl. Claude Code puts the plugin's bin/ on PATH for Bash calls; hooks call it by path."""
+
+import sys
+from pathlib import Path
+
+if sys.version_info < (3, 11):  # noqa: UP036 - users may run an older python3 than the dev environment
+    sys.exit("supervisectl needs Python 3.11 or newer")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+
+def main() -> int:
+    if sys.argv[1:2] == ["hook"]:
+        # Hooks run inside tool calls: skip the CLI's heavier imports.
+        from supervise import hooks
+
+        return hooks.main(sys.argv[1:])
+    from supervise import cli
+
+    return cli.main(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
