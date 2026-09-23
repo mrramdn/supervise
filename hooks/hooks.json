@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(*supervisectl*)",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl\" hook pre-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl\" hook subagent-stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

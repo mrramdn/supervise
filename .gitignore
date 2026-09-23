@@ -9,13 +9,3 @@ dist/
 # Tooling caches
 .pytest_cache/
 .ruff_cache/
-.hypothesis/
-
-# Coverage
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-
-# Eval output
-evals/results/
