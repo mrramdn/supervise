@@ -25,16 +25,32 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   of kind `test`, output says NO TESTS.
 - **Review evidence.** The SubagentStop hook appends each finished subagent to `runs/<id>/events.jsonl`, with the
   reviewer's final reply. `review record` accepts only a `supervise:code-reviewer` stop after `review begin` and
-  parses the findings itself; `block_on_severity` (default `high`) decides what blocks.
-- **Fix rounds.** `fix` uses a round. When all `max_fix_rounds` are used, the next `fix` escalates the run, and only
-  `override` (typed by the user) continues it. The PreToolUse hook denies `override` to the model.
+  parses the findings itself; `block_on_severity` (default `high`) decides what blocks. A finding with
+  `"kind": "acceptance"` (an acceptance criterion not met or not shown) blocks at any severity.
+- **Fix rounds.** `fix` after a failed verify or a blocking review uses a round. When all `max_fix_rounds` are used,
+  the next `fix` escalates the run, and only `override` (typed by the user) continues it. The PreToolUse hook denies
+  `override` to the model. `fix` after a clean review, to apply non-blocking suggestions, uses no round.
+- **Commit.** Off by default. `commit -m` commits the latest accepted run only while the working tree still has the
+  accepted fingerprint, with a Conventional Commits message and no AI attribution, through plain `git commit`.
 
 ## Decisions
 
 - **Stdlib Python 3.11+, git, POSIX.** No dependencies for users. The code lives in `src/supervise/`; `bin/supervisectl`
   is a launcher that Claude Code puts on PATH for Bash calls. `hook` skips the CLI imports.
 - **Findings come from the hook, not the orchestrator.** `review record` reads the reviewer's reply captured by the
-  hook, so the orchestrator cannot drop or soften findings on the way. Only a self-review passes its own findings.
+  hook, so the orchestrator cannot drop or soften findings on the way. Only a self-review passes its own findings,
+  with one exception: when a reviewer reply has no findings JSON, the orchestrator may transcribe it
+  (`--findings`). The review is then marked transcribed and the reply is saved beside the diff, so the user can
+  compare the two; refusing outright lost those findings in dogfooding.
+- **`review record` waits up to 15 seconds for the reviewer's stop.** In dogfooding the Agent tool's hand-back
+  reached the orchestrator a few seconds before the SubagentStop hook ran, so the first `review record` always
+  failed. It polls without the state lock.
+- **Stops without an agent type are dropped.** Claude Code 2.1.280 sends SubagentStop about every 30 seconds while a
+  subagent runs, with an empty `agent_type`, a fresh `agent_id`, and no transcript. They are not agents the model
+  started (likely internal progress queries), so the hook does not record them and readers skip old ones.
+- **Non-blocking findings do not reopen the run.** The skill accepts after a clean review and reports the
+  non-blocking findings; one extra review cost a reviewer spawn in dogfooding for a `low` finding. Applying them
+  when the user asks is not a repair, so it costs no fix round.
 - **Hook events live beside the state, not in it.** `verify` holds the write lock while gates run, and a second
   writer is refused rather than queued (test 11). A hook must never wait for or lose to that lock, so it appends to
   `events.jsonl` under its own short `flock`. Readers (`status`, `report`) take no lock; state is replaced atomically.
@@ -76,8 +92,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   `.supervise/`; v0.1 keeps two hooks. A substituted reviewer cannot pass `review record`, which covers the failure
   that mattered (a silent `general-purpose` reviewer).
 - The plan names only `review record`; the reviewer's findings are taken from the hook event (see Decisions).
-- No fallback to the subagent transcript when `last_assistant_message` is missing: S5 confirmed the field, and a
-  missing reply fails visibly (`review record` refuses).
+- The reviewer's reply is `last_assistant_message`, except when the subagent handed its report back through the
+  `SubagentHandback` tool (seen in dogfooding on Claude Code 2.1.280): the final message is then only a note, so the
+  hook takes the handback's message from the subagent transcript. Only a `{"findings": ...}` object that ends the
+  reply counts; that note quoted `{"findings": []}` in its prose, which v0.1 would have read as a clean review.
 
 ## Checked on 2026-09-23
 

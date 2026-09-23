@@ -16,7 +16,7 @@ repository root, which `init` adds to `.git/info/exclude`.
 
 | Command | Allowed when | Effect |
 |---|---|---|
-| `init` | any time | Detects gates from `Makefile`, `package.json`, `pyproject.toml`; writes `.supervise/config.toml` if missing. |
+| `init` | any time | Detects gates from `Makefile`, `package.json` (runner from its `packageManager` field, else the lockfile), `pyproject.toml`; writes `.supervise/config.toml` if missing. |
 | `start "<task>"` | no open run | Runs the gates as the baseline and opens a run in phase PLAN. |
 | `status` | any time | Shows the open run, whether the tree changed since verify or review, and the next step. |
 | `plan set <file\|->` | PLAN | Records the plan; moves to IMPLEMENT. |
@@ -24,10 +24,12 @@ repository root, which `init` adds to `.git/info/exclude`.
 | `subtask done <id> [--note T]` | after PLAN | Marks a subtask done. |
 | `verify` | IMPLEMENT, FIX, VERIFY, REVIEW | Runs the gates; moves to VERIFY. Refused after a failed verify if files changed since (run `fix` first), and after a blocking review. |
 | `review begin` | VERIFY with a passing verify of the current tree | Writes `runs/<id>/review-<n>.diff` and prints the reviewer brief; moves to REVIEW. |
-| `review record` | REVIEW, after `review begin`, tree unchanged | Reads the findings of every `supervise:code-reviewer` that finished since `review begin`. |
+| `review record [--wait S]` | REVIEW, after `review begin`, tree unchanged | Reads the findings of every `supervise:code-reviewer` that finished since `review begin`, waiting up to S seconds (default 15) for its stop event. |
+| `review record --findings <file\|->` | as above, when a reviewer reply has no findings JSON | Records the orchestrator's transcription of that reply as an independent review marked transcribed; saves the reply as `review-N-reply.md`. |
 | `review record --self --reason T [--findings <file\|->]` | as above, diff of at most 10 lines and no binary files since the last independent review | Records the orchestrator's own review. |
-| `fix` | VERIFY, REVIEW | Starts a fix round and lists what to repair. When all rounds are used, the run becomes escalated instead (exit 1). |
+| `fix` | VERIFY, REVIEW | Starts a fix round and lists what to repair. When all rounds are used, the run becomes escalated instead (exit 1). After a clean review it lists the non-blocking findings and uses no fix round. |
 | `accept` | REVIEW with a clean review | Accepts when the last verify passed and verify, review, and the current tree have the same fingerprint. |
+| `commit -m MSG` | latest run accepted, no open run, tree unchanged since accept | Only when the user asks. Stages and commits exactly the accepted tree with `git commit` (hooks run). Refuses a message that is not a Conventional Commit or carries AI attribution, and a second commit of the run. |
 | `report [--run ID]` | any time | Prints a markdown report of the open run, or the latest run. |
 | `pause [--reason T]` / `resume` | active / paused run | Pauses or resumes the run; any process or session can resume. |
 | `abort [--reason T]` | open run | Drops the run and leaves the working tree as it is. |
@@ -43,11 +45,13 @@ repository root, which `init` adds to `.git/info/exclude`.
   its output, with durations, timestamps, and addresses removed, are identical. A gate that changes the working
   tree fails the verify.
 - **NO TESTS.** Without a gate of kind `test`, status, verify, accept, and report say NO TESTS.
-- **Fix rounds.** Each `fix` uses one round, up to `max_fix_rounds`. `subtask add --origin user` does not use one.
+- **Fix rounds.** Each `fix` after a failed verify or a blocking review uses one round, up to `max_fix_rounds`.
+  `subtask add --origin user` and a `fix` after a clean review (to apply non-blocking suggestions) do not.
 - **Independent review.** `review record` needs a SubagentStop of `supervise:code-reviewer` after `review begin`;
-  the hook stores its final reply and the CLI parses the last `{"findings": [...]}` object in it.
-- **Blocking.** Findings at or above `block_on_severity` (default `high`) block accept. Unknown severities count
-  as `high`.
+  the hook stores its reply (the report it handed back through `SubagentHandback`, else its final message) and the
+  CLI parses the `{"findings": [...]}` object that ends it, fenced or not. Stops without an agent type are internal to Claude Code and are not recorded.
+- **Blocking.** Findings at or above `block_on_severity` (default `high`) block accept, and so does every finding
+  with `"kind": "acceptance"` (an acceptance criterion not met or not shown). Unknown severities count as `high`.
 - **One writer.** Commands that change state take a non-blocking lock; a second writer is refused (exit 2) while
   the first runs. `status` and `report` read without the lock.
 
@@ -62,6 +66,7 @@ repository root, which `init` adds to `.git/info/exclude`.
   runs/<id>/events.jsonl subagent stops recorded by the hook
   runs/<id>/logs/        full gate output per baseline and verify
   runs/<id>/review-N.diff
+  runs/<id>/review-N-reply.md  reviewer reply of a transcribed review
 ```
 
 `config.toml`:
@@ -81,7 +86,8 @@ Plan JSON (`plan set`): `{"summary": "...", "subtasks": [{"title": "...", "accep
 titles also works.
 
 Findings JSON (reviewer reply, `--findings`):
-`{"findings": [{"file": "src/app.py", "line": 42, "severity": "high", "summary": "..."}]}`.
+`{"findings": [{"file": "src/app.py", "line": 42, "severity": "high", "summary": "..."}]}`. Add
+`"kind": "acceptance"` to a finding about an acceptance criterion that is not met or not shown.
 
 ## Limits
 

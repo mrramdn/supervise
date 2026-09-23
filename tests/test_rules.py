@@ -147,9 +147,9 @@ def test_review_record_needs_the_code_reviewer_and_self_review_needs_a_small_dif
     project.ok("verify")
     project.ok("review", "begin")
 
-    assert f"no result from {REVIEWER}" in project.refused("review", "record").stderr
+    assert f"no result from {REVIEWER}" in project.refused("review", "record", "--wait", "0").stderr
     project.subagent_stop("general-purpose", '{"findings": []}')
-    assert "Seen instead: general-purpose" in project.refused("review", "record").stderr
+    assert "Seen instead: general-purpose" in project.refused("review", "record", "--wait", "0").stderr
     self_review = project.refused("review", "record", "--self", "--reason", "looks fine")
     assert "only allowed for small diffs" in self_review.stderr
     project.subagent_stop(REVIEWER, "All good, nothing to report.")
@@ -215,8 +215,10 @@ def test_user_request_does_not_count_as_a_fix_round(project: Project) -> None:
     assert state["subtasks"][-1]["origin"] == "user"
 
     project.ok("verify")
-    project.review_clean()
-    project.ok("fix")  # a fix round, for contrast
+    project.ok("review", "begin")
+    project.reviewer_says([{"file": "app.txt", "line": 1, "severity": "high", "summary": "wrong wording"}])
+    assert project.run("review", "record").returncode == 1
+    project.ok("fix")  # repairing a blocking review is a fix round, for contrast
     assert project.state()["fix_round"] == 1
 
 

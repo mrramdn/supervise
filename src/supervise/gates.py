@@ -20,6 +20,7 @@ Gate = dict[str, Any]
 
 KINDS = ("test", "lint", "typecheck", "build", "other")
 SEVERITIES = ("info", "low", "medium", "high", "critical")
+PACKAGE_MANAGERS = ("npm", "pnpm", "yarn", "bun")
 DEFAULT_TIMEOUT = 1800
 DEFAULT_MAX_FIX_ROUNDS = 3
 DEFAULT_BLOCK_ON = "high"
@@ -118,9 +119,14 @@ def detect(root: Path) -> list[Gate]:
     package = root / "package.json"
     if package.is_file():
         try:
-            scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts") or {}
-        except (ValueError, AttributeError):
-            scripts = {}
+            manifest = json.loads(package.read_text(encoding="utf-8"))
+        except ValueError:
+            manifest = {}
+        if not isinstance(manifest, dict):
+            manifest = {}
+        scripts = manifest.get("scripts") if isinstance(manifest.get("scripts"), dict) else {}
+        # The packageManager field ("pnpm@9.12.0", used by Corepack) names the tool; lockfiles are the fallback.
+        declared = str(manifest.get("packageManager") or "").split("@", 1)[0].strip()
         runner = next(
             (
                 pm
@@ -134,6 +140,8 @@ def detect(root: Path) -> list[Gate]:
             ),
             "npm",
         )
+        if declared in PACKAGE_MANAGERS:
+            runner = declared
         for kind, names in (
             ("lint", ["lint"]),
             ("typecheck", ["typecheck", "type-check"]),

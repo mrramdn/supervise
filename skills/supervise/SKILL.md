@@ -41,7 +41,7 @@ Copy this into your task list and keep it current:
 - [ ] verify
 - [ ] review begin, supervise:code-reviewer, review record
 - [ ] accept, or fix, then verify and review again
-- [ ] report to the user
+- [ ] report to the user; offer a commit, and commit only if they say yes
 ```
 
 ## Phases
@@ -69,8 +69,11 @@ subagent. A gate that already failed at baseline passes only if its output is un
 
 **Review.** `supervisectl review begin` writes the diff and prints a brief. Call the Agent tool with
 `subagent_type: "supervise:code-reviewer"` and that brief. When it finishes, run `supervisectl review record`;
-the CLI reads the reviewer's findings from the hook and decides which ones block. Keep your hands off the files
-from `review begin` until `accept`: any edit changes the tree fingerprint and accept will refuse.
+the CLI reads the reviewer's findings from the hook (waiting a few seconds for the hook if needed) and decides which
+ones block. If it refuses because the reply has no findings JSON, copy every finding from the reviewer's reply, as
+written, into `supervisectl review record --findings -`; the report marks the review as transcribed and keeps the
+reply. Do not act on findings before they are recorded. Keep your hands off the files from `review begin` until
+`accept`: any edit changes the tree fingerprint and accept will refuse.
 A diff of at most 10 lines since the last independent review may be reviewed by you instead:
 `supervisectl review record --self --reason "<why>" --findings -` with `{"findings": [...]}` on stdin. The report
 lists every self-review.
@@ -79,7 +82,14 @@ lists every self-review.
 fix round and lists what to repair. Then repair, `verify`, and review again.
 
 **Accept.** `supervisectl accept` succeeds only when the last verify passed, the last review is clean, and both
-saw exactly the current working tree.
+saw exactly the current working tree. After a clean review, accept right away and list the non-blocking findings in
+your report; each extra change costs another verify and review. Apply them only if the user asks: then
+`supervisectl fix` (after a clean review it uses no fix round), change the code, `verify`, and review again.
+
+**Commit.** Nothing is committed by default; the user may want to check the result first (in a browser, for a
+visual change). After accepting, ask whether to commit. Only on a yes, run
+`supervisectl commit -m "<type(scope): subject>"`: it commits exactly the accepted tree and refuses if files
+changed since accept or the message is not a Conventional Commit. Add no AI attribution to the message.
 
 ## Escalation, pause, abort
 
@@ -92,7 +102,7 @@ saw exactly the current working tree.
 ## Finishing
 
 - End with `supervisectl report` and summarize it for the user: what changed, the gate results, the review
-  verdict, and anything not done.
+  verdict with the non-blocking findings, and anything not done.
 - If the run is labelled NO TESTS, say so plainly: passing gates without a test gate do not show the change works.
 - Stay within the requested scope. List what you left out or could not finish rather than stretching the task.
 

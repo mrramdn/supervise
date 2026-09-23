@@ -8,20 +8,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import secrets
+import subprocess
 import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from supervise import __version__, hooks
+from supervise import __version__, commits, hooks
 from supervise.gates import SEVERITIES, describe, detect, load_config, render_config, run_gates
 from supervise.store import Project, Refused, State, SuperviseError, git, now, read_events, write_atomic
 
 REVIEWER = hooks.REVIEWER
 SELF_REVIEW_MAX_LINES = 10
+REVIEW_WAIT_SECONDS = 15.0
 OPEN = ("active", "paused", "escalated")
 NO_TESTS = 'NO TESTS: no gate of kind "test" is configured, so passing gates do not show that the change works.'
 PLAN_HINT = 'pass {"summary": "...", "subtasks": [{"title": "...", "acceptance": "..."}]}'
@@ -37,6 +40,10 @@ SEVERITY_ALIASES = {
     "suggestion": "info",
 }
 _FINDINGS_START = re.compile(r'\{\s*"findings"\s*:')
+FINDINGS_HINT = (
+    'pass {"findings": [{"file": "...", "line": 1, "severity": "high", "summary": "..."}]}; '
+    'add "kind": "acceptance" for an acceptance criterion that is not met or not shown'
+)
 
 
 # --- small helpers -----------------------------------------------------------------------------------------------
@@ -54,6 +61,18 @@ def record(state: State, event: str, note: str = "") -> None:
 
 def short_list(items: list[str], limit: int = 10) -> str:
     return ", ".join(items[:limit]) + (f" and {len(items) - limit} more" if len(items) > limit else "")
+
+
+def rounds_text(state: State) -> str:
+    """Fix rounds used, plus the uncounted rounds that applied non-blocking suggestions after a clean review."""
+    extra = state.get("suggestion_rounds", 0)
+    note = f" (plus {extra} for non-blocking suggestions, not counted)" if extra else ""
+    return f"{state['fix_round']}/{state['max_fix_rounds']}{note}"
+
+
+def agent_stops(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Subagent stops with an agent type. Older event files also hold typeless internal stops; they are skipped."""
+    return [e for e in events if e.get("event") == "subagent_stop" and e.get("agent_type")]
 
 
 def next_step(state: State) -> str:
@@ -91,6 +110,14 @@ def next_step(state: State) -> str:
 
 def failed_gates(verify: dict[str, Any]) -> list[dict[str, Any]]:
     return [g for g in verify["gates"] if g["status"] == "fail"]
+
+
+def after_clean_review(state: State) -> dict[str, Any] | None:
+    """The last review, when the run sits in REVIEW with that review recorded clean."""
+    review = last(state["reviews"])
+    if state["phase"] == "REVIEW" and review and review["state"] == "recorded" and review["verdict"] == "clean":
+        return review
+    return None
 
 
 def needs_fix(state: State) -> bool:
@@ -150,34 +177,50 @@ def normalize_finding(raw: Any) -> dict[str, Any]:
     severity = str(raw.get("severity") or "").strip().lower()
     severity = SEVERITY_ALIASES.get(severity, severity)
     line = raw.get("line")
+    kind = str(raw.get("kind") or "").strip().lower()
     return {
         "file": str(raw.get("file") or ""),
         "line": line if isinstance(line, int) and not isinstance(line, bool) else None,
         # An unknown severity blocks rather than slipping through.
         "severity": severity if severity in SEVERITIES else "high",
+        "kind": "acceptance" if kind == "acceptance" else "",
         "summary": str(raw.get("summary") or raw.get("message") or "").strip(),
     }
 
 
 def parse_findings(text: str) -> list[dict[str, Any]] | None:
-    """The last `{"findings": [...]}` object in a reviewer reply, fenced or not; None when there is none."""
+    """The `{"findings": [...]}` object that ends a reviewer reply, fenced or not; None when the reply ends otherwise.
+
+    Only the end counts, because a reply may quote `{"findings": []}` in its prose. In a fenced block the findings
+    key need not come first.
+    """
+    tail = text.rstrip()
+    tail = tail[:-3].rstrip() if tail.endswith("```") else tail
+    starts = {m.start() for m in _FINDINGS_START.finditer(tail)}
+    fence = tail.rfind("```")
+    if fence != -1 and (brace := tail.find("{", fence)) != -1:
+        starts.add(brace)
     decoder = json.JSONDecoder()
-    for match in reversed(list(_FINDINGS_START.finditer(text))):
+    for start in sorted(starts, reverse=True):
         try:
-            data, _ = decoder.raw_decode(text, match.start())
+            data, end = decoder.raw_decode(tail, start)
         except ValueError:
             continue
-        if isinstance(data, dict) and isinstance(data.get("findings"), list):
+        if end == len(tail) and isinstance(data, dict) and isinstance(data.get("findings"), list):
             return [normalize_finding(item) for item in data["findings"]]
     return None
 
 
 def finding_line(finding: dict[str, Any]) -> str:
     where = finding["file"] + (f":{finding['line']}" if finding["line"] is not None else "")
-    return f"{finding['severity']:<8} {where or '(no file)'}: {finding['summary']}"
+    kind = "[acceptance] " if finding.get("kind") == "acceptance" else ""
+    return f"{finding['severity']:<8} {kind}{where or '(no file)'}: {finding['summary']}"
 
 
 def is_blocking(state: State, finding: dict[str, Any]) -> bool:
+    """An unmet or unproven acceptance criterion blocks at any severity; other findings by `block_on_severity`."""
+    if finding.get("kind") == "acceptance":
+        return True
     return SEVERITIES.index(finding["severity"]) >= SEVERITIES.index(state["block_on_severity"])
 
 
@@ -199,7 +242,10 @@ def review_line(review: dict[str, Any]) -> str:
         return f"Review #{review['n']}: waiting for the reviewer (diff: {review['diff']})"
     if review["state"] == "abandoned":
         return f"Review #{review['n']}: abandoned"
-    who = "independent" if review["reviewer"] == "independent" else f"self-review ({review['reason']})"
+    if review["reviewer"] == "independent":
+        who = "independent, findings transcribed by the orchestrator" if review.get("transcribed") else "independent"
+    else:
+        who = f"self-review ({review['reason']})"
     other = len(review["findings"]) - review["blocking"]
     return f"Review #{review['n']}: {review['verdict']}, {who}; {review['blocking']} blocking, {other} non-blocking"
 
@@ -224,7 +270,7 @@ def gate_lines(gates: list[dict[str, Any]]) -> list[str]:
 def summary_lines(project: Project, state: State) -> list[str]:
     lines = [
         f"Run {state['run_id']}: {state['task']}",
-        f"Status: {state['status']}, phase {state['phase']}, fix round {state['fix_round']}/{state['max_fix_rounds']}",
+        f"Status: {state['status']}, phase {state['phase']}, fix round {rounds_text(state)}",
     ]
     if state["no_tests"]:
         lines.append(NO_TESTS)
@@ -554,27 +600,66 @@ def cmd_review_begin(_args: argparse.Namespace) -> int:
         f"  Task: {state['task']}",
     ]
     for s in state["subtasks"]:
-        lines.append(f"  - {s['id']} {s['title']}" + (f" (acceptance: {s['acceptance']})" if s["acceptance"] else ""))
+        lines.append(
+            f"  - {s['id']} {s['title']}"
+            + (f" (acceptance: {s['acceptance']})" if s["acceptance"] else "")
+            + (f" (note: {s['note']})" if s["note"] else "")
+        )
+    gates = "; ".join(f"{g['name']} `{g['command']}` {g['status']}" for g in verify["gates"]) or "no gates"
+    lines.append(f"  Gates at verify #{verify['n']} (the only commands known to have run on this tree): {gates}")
     lines.append(f"  Diff to review: {diff}")
     if independent:
         lines.append("  A previous review exists; check the files changed since then first, then the whole diff.")
-    lines += ['  End the reply with the findings JSON: {"findings": [...]}.', "", f"next: {next_step(state)}"]
+    lines += [
+        '  Report each acceptance criterion that is not met, or not shown by the diff or the gates, with "kind":'
+        ' "acceptance" (it blocks at any severity).',
+        '  End the reply with the findings JSON: {"findings": [...]}.',
+        "",
+        f"next: {next_step(state)}",
+    ]
     print("\n".join(lines))
     return 0
+
+
+def wait_for_reviewer(project: Project, seconds: float) -> None:
+    """Give the SubagentStop hook time to land: the reviewer's hand-back can arrive a few seconds before it.
+
+    Polls without the state lock; `review record` checks everything again under the lock afterwards.
+    """
+    run_id = project.current_id()
+    if not run_id or seconds <= 0:
+        return
+    state = project.load(run_id)
+    review = last(state["reviews"])
+    if state["status"] != "active" or state["phase"] != "REVIEW" or not review or review["state"] != "begun":
+        return
+    run_dir, deadline = project.run_dir(run_id), time.monotonic() + seconds
+    waiting = False
+    while not any(e["agent_type"] == REVIEWER for e in agent_stops(read_events(run_dir)[review["events_offset"] :])):
+        if time.monotonic() >= deadline:
+            return
+        if not waiting:
+            print(f"Waiting up to {seconds:g}s for the {REVIEWER} stop event.", flush=True)
+            waiting = True
+        time.sleep(0.25)
 
 
 def cmd_review_record(args: argparse.Namespace) -> int:
     reason = (args.reason or "").strip()
     if args.self_review and not reason:
         raise Refused("--self needs --reason", "", '`supervisectl review record --self --reason "<why>"`')
-    self_findings: list[dict[str, Any]] = []
-    if args.self_review and args.findings:
-        data = read_json_input(args.findings, "findings", 'pass {"findings": [...]}')
+    if not math.isfinite(args.wait) or args.wait < 0:
+        raise Refused("--wait needs 0 or more seconds", "", f"--wait {REVIEW_WAIT_SECONDS:g}")
+    given: list[dict[str, Any]] | None = None
+    if args.findings:
+        data = read_json_input(args.findings, "findings", FINDINGS_HINT)
         items = data.get("findings") if isinstance(data, dict) else data
         if not isinstance(items, list):
-            raise Refused("the findings need a list", "", 'pass {"findings": [...]}')
-        self_findings = [normalize_finding(item) for item in items]
+            raise Refused("the findings need a list", "", FINDINGS_HINT)
+        given = [normalize_finding(item) for item in items]
     project = Project.find()
+    if not args.self_review:
+        wait_for_reviewer(project, args.wait)
     with project.lock("review record"):
         state = open_run(project)
         require_phase(state, "review record", "REVIEW")
@@ -596,13 +681,14 @@ def cmd_review_record(args: argparse.Namespace) -> int:
                     f"the limit is {SELF_REVIEW_MAX_LINES} lines and no binary files.",
                     f"run the {REVIEWER} agent with the brief from `review begin`, then `supervisectl review record`",
                 )
-            findings, reviewer, agent_ids = self_findings, "self", []
+            findings, reviewer, agent_ids = given or [], "self", []
+            transcribed, reply = False, ""
         else:
-            events = read_events(project.run_dir(state["run_id"]))[review["events_offset"] :]
-            stops = [e for e in events if e.get("event") == "subagent_stop"]
-            mine = [e for e in stops if e.get("agent_type") == REVIEWER]
+            run_dir = project.run_dir(state["run_id"])
+            stops = agent_stops(read_events(run_dir)[review["events_offset"] :])
+            mine = [e for e in stops if e["agent_type"] == REVIEWER]
             if not mine:
-                seen = sorted({str(e.get("agent_type")) for e in stops})
+                seen = sorted({str(e["agent_type"]) for e in stops})
                 raise Refused(
                     f"no result from {REVIEWER} since `review begin`",
                     f"A review counts as independent only when a {REVIEWER} subagent finishes after `review begin`"
@@ -610,16 +696,36 @@ def cmd_review_record(args: argparse.Namespace) -> int:
                     f'run the Agent tool with subagent_type "{REVIEWER}" and the brief from `review begin`, then '
                     f"this command again (a diff of at most {SELF_REVIEW_MAX_LINES} lines may use --self --reason)",
                 )
-            findings = []
+            findings, without_json = [], []
             for event in mine:
                 parsed = parse_findings(str(event.get("message") or ""))
+                if parsed is None and event.get("final_message"):
+                    parsed = parse_findings(str(event["final_message"]))
                 if parsed is None:
-                    raise Refused(
-                        f"the {REVIEWER} reply has no findings JSON",
-                        f'Agent {event.get("agent_id")} ended without a {{"findings": [...]}} block.',
-                        "`supervisectl review begin` again, then re-run the reviewer and ask it to end with the JSON",
-                    )
-                findings += parsed
+                    without_json.append(event)
+                else:
+                    findings += parsed
+            if without_json and given is None:
+                raise Refused(
+                    f"the {REVIEWER} reply has no findings JSON",
+                    f"Agent {', '.join(str(e.get('agent_id')) for e in without_json)} ended without a"
+                    ' {"findings": [...]} block, so its findings would be lost.',
+                    "copy every finding from the reviewer's reply, as written, into `supervisectl review record"
+                    ' --findings -` with {"findings": [...]} on stdin (recorded as transcribed, with the reply saved'
+                    " for the report), or `supervisectl review begin` again and re-run the reviewer",
+                )
+            if given is not None and not without_json:
+                raise Refused(
+                    "--findings is only for a reviewer reply without findings JSON, or with --self",
+                    f"The {REVIEWER} reply has the findings JSON; `review record` reads the findings from it.",
+                    "`supervisectl review record` without --findings",
+                )
+            transcribed, reply = bool(without_json), ""
+            if transcribed:
+                findings += given or []
+                reply_path = run_dir / f"review-{review['n']}-reply.md"
+                write_atomic(reply_path, "\n\n---\n\n".join(str(e.get("message") or "") for e in without_json))
+                reply = str(reply_path)
             reviewer, agent_ids = "independent", [e.get("agent_id") for e in mine]
         blocking = [f for f in findings if is_blocking(state, f)]
         review.update(
@@ -629,6 +735,8 @@ def cmd_review_record(args: argparse.Namespace) -> int:
                 "reviewer": reviewer,
                 "agent_ids": agent_ids,
                 "reason": reason if args.self_review else "",
+                "transcribed": transcribed,
+                "reply": reply,
                 "findings": findings,
                 "blocking": len(blocking),
                 "verdict": "blocking" if blocking else "clean",
@@ -637,6 +745,8 @@ def cmd_review_record(args: argparse.Namespace) -> int:
         record(state, "review record", review_line(review))
         project.save(state)
     lines = [review_line(review)]
+    if review["reply"]:
+        lines.append(f"  The reviewer's reply is saved at {review['reply']}; the report points to it.")
     lines += [f"  BLOCKING {finding_line(f)}" for f in blocking]
     lines += [f"  {finding_line(f)}" for f in findings if not is_blocking(state, f)]
     lines.append(f"next: {next_step(state)}")
@@ -662,6 +772,22 @@ def cmd_fix(_args: argparse.Namespace) -> int:
     with project.lock("fix"):
         state = open_run(project)
         require_phase(state, "fix", "VERIFY", "REVIEW")
+        clean = after_clean_review(state)
+        if clean:
+            # Nothing failed, so applying non-blocking suggestions is not a repair and uses no fix round.
+            state["suggestion_rounds"] = state.get("suggestion_rounds", 0) + 1
+            state["phase"] = "FIX"
+            record(state, "fix", f"non-blocking suggestions of review #{clean['n']}; fix round unchanged")
+            project.save(state)
+            suggestions = [finding_line(f) for f in clean["findings"]]
+            lines = [
+                f"Applying non-blocking suggestions of review #{clean['n']}; "
+                f"fix round unchanged ({state['fix_round']}/{state['max_fix_rounds']}).",
+                *(f"  suggestion: {item}" for item in suggestions),
+                "The changes still need a passing verify and a clean review before accept.",
+            ]
+            print("\n".join([*lines, f"next: {next_step(state)}"]))
+            return 0
         items = open_items(state)
         if state["fix_round"] >= state["max_fix_rounds"]:
             state["status"] = "escalated"
@@ -715,7 +841,7 @@ def cmd_accept(_args: argparse.Namespace) -> int:
                 f"The working tree no longer matches what was verified and reviewed. Changed: {short_list(changed)}.",
                 "`supervisectl verify`, then `supervisectl review begin` and review again",
             )
-        state["status"], state["phase"] = "accepted", "ACCEPT"
+        state["status"], state["phase"], state["accepted_tree"] = "accepted", "ACCEPT", tree
         record(state, "accept", f"verify #{verify['n']}, review #{review['n']}")
         project.save(state)
         project.set_current(None)
@@ -723,7 +849,7 @@ def cmd_accept(_args: argparse.Namespace) -> int:
         f"ACCEPTED run {state['run_id']}: {state['task']}",
         verify_line(verify),
         review_line(review),
-        f"Fix rounds used: {state['fix_round']}/{state['max_fix_rounds']}",
+        f"Fix rounds used: {rounds_text(state)}",
     ]
     lines += [note] if (note := baseline_note(verify)) else []
     if state["no_tests"]:
@@ -732,7 +858,71 @@ def cmd_accept(_args: argparse.Namespace) -> int:
     if left:
         lines.append(f"Not marked done: {'; '.join(left)}")
     lines.append("Full report: `supervisectl report`")
+    lines.append('Nothing is committed. Only if the user asks: `supervisectl commit -m "<conventional message>"`.')
     print("\n".join(lines))
+    return 0
+
+
+def cmd_commit(args: argparse.Namespace) -> int:
+    message = args.message.strip()
+    problem = commits.problem(message)
+    if problem:
+        raise Refused("the commit message is not allowed", problem, commits.HINT)
+    project = Project.find()
+    with project.lock("commit"):
+        open_id = project.current_id()
+        if open_id and project.load(open_id)["status"] in OPEN:
+            raise Refused(
+                f"run {open_id} is still open", "Only an accepted run can be committed.", "`supervisectl status`"
+            )
+        run_id = project.latest_run_id()
+        state = project.load(run_id) if run_id else None
+        if state is None or state["status"] != "accepted":
+            detail = f"The latest run {run_id} is {state['status']}." if state else "There are no runs."
+            raise Refused("commit needs an accepted run", detail, "`supervisectl status`")
+        if state.get("commit"):
+            raise Refused(f"run {run_id} is already committed", f"Commit {state['commit']['sha']}.", "nothing to do")
+        accepted = state.get("accepted_tree") or last(state["reviews"])["tree"]
+        tree = project.fingerprint()
+        if tree != accepted:
+            changed = project.changed_files(accepted, tree)
+            raise Refused(
+                "files changed since accept",
+                f"Only the accepted tree may be committed. Changed: {short_list(changed)}.",
+                "restore the accepted files, or start a new run for the new changes",
+            )
+        head = project.head()
+        if head and git(project.root, "rev-parse", f"{head}^{{tree}}").strip() == accepted:
+            raise Refused("nothing to commit", "HEAD already holds the accepted tree.", "nothing to do")
+        tracked = git(project.root, "ls-files", "--", project.dir.name).split()
+        if tracked:
+            raise Refused(
+                f"git tracks files under {project.dir.name}/",
+                f"The accepted tree leaves {project.dir.name}/ out, so a commit would delete {short_list(tracked)}.",
+                "commit the change yourself with git",
+            )
+        git(project.root, "add", "-A")
+        if git(project.root, "write-tree").strip() != accepted:
+            raise SuperviseError(
+                "the staged tree differs from the accepted tree; nothing was committed, but the index now stages "
+                "the whole working tree (`git restore --staged .` unstages it)"
+            )
+        # Plain `git commit`, so the repository's own hooks (commit-msg, pre-commit) run as usual.
+        proc = subprocess.run(
+            ["git", "commit", "-q", "-F", "-"], cwd=project.root, input=message + "\n", capture_output=True, text=True
+        )
+        if proc.returncode != 0:
+            output = (proc.stderr or proc.stdout).strip()
+            raise SuperviseError(f"git commit failed (the accepted files stay staged): {output}")
+        sha = git(project.root, "rev-parse", "HEAD").strip()
+        committed = git(project.root, "rev-parse", "HEAD^{tree}").strip()
+        header = message.splitlines()[0]
+        state["commit"] = {"sha": sha, "at": now(), "header": header, "tree_matches": committed == accepted}
+        record(state, "commit", f"{sha[:12]} {header}")
+        project.save(state)
+    if committed != accepted:
+        raise SuperviseError(f"commit {sha[:12]} differs from the accepted tree (a git hook changed files)")
+    print(f"Committed {sha[:12]}: {header}\nThe commit holds exactly the tree accepted in run {run_id}.")
     return 0
 
 
@@ -816,7 +1006,7 @@ def render_report(state: State, events: list[dict[str, Any]]) -> str:
         f"- Task: {state['task']}",
         f"- Status: **{state['status']}** (phase {state['phase']})",
         f"- Started {state['created_at']}; last change {state['updated_at']}",
-        f"- Fix rounds: {state['fix_round']}/{state['max_fix_rounds']}",
+        f"- Fix rounds: {rounds_text(state)}",
     ]
     if state["no_tests"]:
         out += ["", f"**{NO_TESTS}**"]
@@ -852,6 +1042,12 @@ def render_report(state: State, events: list[dict[str, Any]]) -> str:
     if state["reviews"]:
         out += ["", "## Reviews", ""]
         out += [f"- {review_line(r)}" for r in state["reviews"]]
+        out += [
+            f"- Review #{r['n']}: the reviewer's reply had no findings JSON; the orchestrator transcribed its findings."
+            f" Reply: {r['reply']}"
+            for r in state["reviews"]
+            if r.get("transcribed")
+        ]
         recorded = [r for r in state["reviews"] if r["state"] == "recorded"]
         if recorded and recorded[-1]["findings"]:
             out += ["", f"Findings of review #{recorded[-1]['n']}:", ""]
@@ -859,10 +1055,14 @@ def render_report(state: State, events: list[dict[str, Any]]) -> str:
                 f"- {'**blocking** ' if is_blocking(state, f) else ''}{finding_line(f)}"
                 for f in recorded[-1]["findings"]
             ]
+    if state.get("commit"):
+        c = state["commit"]
+        match = "" if c["tree_matches"] else " (**differs from the accepted tree**)"
+        out += ["", "## Commit", "", f"- {c['sha'][:12]} {c['header']}{match}"]
     if state["overrides"]:
         out += ["", "## Overrides by the user", ""]
         out += [f"- {o['at']}: max_fix_rounds {o['from']} -> {o['to']}: {o['reason']}" for o in state["overrides"]]
-    agents = Counter(str(e.get("agent_type")) for e in events if e.get("event") == "subagent_stop")
+    agents = Counter(str(e["agent_type"]) for e in agent_stops(events))
     if agents:
         out += ["", "## Subagents", ""]
         out += [f"- {name}: {count} finished" for name, count in sorted(agents.items())]
@@ -927,9 +1127,21 @@ def build_parser() -> argparse.ArgumentParser:
     p = add(review, "record", cmd_review_record, "record the code-reviewer's findings (or a small self-review)")
     p.add_argument("--self", dest="self_review", action="store_true", help="orchestrator review of a small diff")
     p.add_argument("--reason", help="why a self-review is enough (required with --self)")
-    p.add_argument("--findings", help="self-review findings JSON file, or - for stdin")
+    p.add_argument(
+        "--findings",
+        help="findings JSON file, or - for stdin: a self-review's, or a transcription of a reply without JSON",
+    )
+    p.add_argument(
+        "--wait",
+        type=float,
+        default=REVIEW_WAIT_SECONDS,
+        help=f"seconds to wait for the reviewer's stop event (default {REVIEW_WAIT_SECONDS:g})",
+    )
     add(sub, "fix", cmd_fix, "start a fix round after a failed verify or a review")
     add(sub, "accept", cmd_accept, "accept the run: passing verify and clean review of the current tree")
+    add(sub, "commit", cmd_commit, "commit exactly the accepted tree (only when the user asks)").add_argument(
+        "-m", "--message", required=True
+    )
     add(sub, "report", cmd_report, "print the run report (markdown)").add_argument("--run", help="run id")
     add(sub, "pause", cmd_pause, "pause the run").add_argument("--reason")
     add(sub, "resume", cmd_resume, "resume a paused run")
