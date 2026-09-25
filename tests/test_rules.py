@@ -222,6 +222,28 @@ def test_user_request_does_not_count_as_a_fix_round(project: Project) -> None:
     assert project.state()["fix_round"] == 1
 
 
+def test_user_request_cannot_skip_the_fix_round_of_a_negative_result(project: Project) -> None:
+    project.configure(TEST_GATE, max_fix_rounds=1)
+    project.start()
+    project.write("app.txt", "bad\n")
+    assert project.run("verify").returncode == 1
+    refused = project.refused("subtask", "add", "retry", "--origin", "user")
+    assert "`supervisectl fix` comes first" in refused.stderr
+
+    project.ok("fix")
+    project.ok("subtask", "add", "also update the docs", "--origin", "user")  # in the fix round it is fine
+    assert (project.state()["phase"], project.state()["fix_round"]) == ("FIX", 1)
+    project.write("app.txt", "ok v2\n")
+    project.ok("verify")
+    project.ok("review", "begin")
+    project.reviewer_says([{"file": "app.txt", "line": 1, "severity": "high", "summary": "wrong wording"}])
+    assert project.run("review", "record").returncode == 1
+    project.refused("subtask", "add", "address the review", "--origin", "user")
+
+    assert project.run("fix").returncode == 1  # the cap still holds
+    assert project.state()["status"] == "escalated"
+
+
 def test_start_in_home_is_refused(project: Project) -> None:
     env = {**project.env, "HOME": str(project.root)}
     for args in (["init"], ["start", "task"], ["status"]):

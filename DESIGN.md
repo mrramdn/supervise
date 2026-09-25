@@ -60,8 +60,9 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   files, because no single tree was tested. Fixing that (usually ignoring generated files) needs no fix round;
   repairing a failing gate does.
 - **Loopholes closed by phase rules.** After a failed gate, `verify` is refused once files changed until `fix` runs.
-  After a blocking review, `verify` and `review begin` are refused until `fix`. Without these, the fix cap could be
-  skipped by verifying again.
+  After a blocking review, `verify` and `review begin` are refused until `fix`. After either, `subtask add` is
+  refused until `fix`, even with `--origin user`, since it would return to IMPLEMENT without a round. Without these,
+  the fix cap could be skipped by verifying again or by calling the repair a user request.
 - **Config is copied at `start`**, so editing `config.toml` mid-run cannot change the gates of that run.
 - **Trust points.** `subtask add --origin user` is the model's claim that the user asked for more; the report
   labels such subtasks. The CLI does not stop a process from editing `.supervise/` by hand. It guards against drift,

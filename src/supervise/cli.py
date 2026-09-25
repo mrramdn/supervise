@@ -451,6 +451,14 @@ def cmd_subtask_add(args: argparse.Namespace) -> int:
         state = open_run(project)
         require_phase(state, "subtask add", "IMPLEMENT", "FIX", "VERIFY", "REVIEW")
         back = state["phase"] in ("VERIFY", "REVIEW")
+        if back and needs_fix(state):
+            # Otherwise going back to IMPLEMENT would repair a failed gate or a blocking review without a fix round.
+            raise Refused(
+                "the last result is negative, so `supervisectl fix` comes first",
+                "A failed gate or a blocking review is repaired in a fix round; a new request from the user is added"
+                " in that round.",
+                "`supervisectl fix`, then `supervisectl subtask add` if the user asked for more",
+            )
         if back and args.origin != "user":
             raise Refused(
                 "new work after verify goes through `supervisectl fix`",

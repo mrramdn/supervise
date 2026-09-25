@@ -20,7 +20,7 @@ repository root, which `init` adds to `.git/info/exclude`.
 | `start "<task>"` | no open run | Runs the gates as the baseline and opens a run in phase PLAN. |
 | `status` | any time | Shows the open run, whether the tree changed since verify or review, and the next step. |
 | `plan set <file\|->` | PLAN | Records the plan; moves to IMPLEMENT. |
-| `subtask add "<title>" [--acceptance T] [--origin plan\|user]` | IMPLEMENT, FIX; VERIFY and REVIEW only with `--origin user` | Adds a subtask. From VERIFY or REVIEW it returns to IMPLEMENT without a fix round. |
+| `subtask add "<title>" [--acceptance T] [--origin plan\|user]` | IMPLEMENT, FIX; VERIFY and REVIEW only with `--origin user`, and not after a failed verify or a blocking review (`fix` first) | Adds a subtask. From VERIFY or REVIEW it returns to IMPLEMENT without a fix round. |
 | `subtask done <id> [--note T]` | after PLAN | Marks a subtask done. |
 | `verify` | IMPLEMENT, FIX, VERIFY, REVIEW | Runs the gates; moves to VERIFY. Refused after a failed verify if files changed since (run `fix` first), and after a blocking review. |
 | `review begin` | VERIFY with a passing verify of the current tree | Writes `runs/<id>/review-<n>.diff` and prints the reviewer brief; moves to REVIEW. |
@@ -46,7 +46,8 @@ repository root, which `init` adds to `.git/info/exclude`.
   tree fails the verify.
 - **NO TESTS.** Without a gate of kind `test`, status, verify, accept, and report say NO TESTS.
 - **Fix rounds.** Each `fix` after a failed verify or a blocking review uses one round, up to `max_fix_rounds`.
-  `subtask add --origin user` and a `fix` after a clean review (to apply non-blocking suggestions) do not.
+  `subtask add --origin user` and a `fix` after a clean review (to apply non-blocking suggestions) do not; after a
+  failed verify or a blocking review, `subtask add` waits until `fix` has counted the round.
 - **Independent review.** `review record` needs a SubagentStop of `supervise:code-reviewer` after `review begin`;
   the hook stores its reply (the report it handed back through `SubagentHandback`, else its final message) and the
   CLI parses the `{"findings": [...]}` object that ends it, fenced or not. Stops without an agent type are internal to Claude Code and are not recorded.

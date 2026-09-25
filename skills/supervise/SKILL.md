@@ -61,7 +61,7 @@ EOF
 the rest, and give it the subtask, the files involved, and the acceptance criteria. Run the relevant tests as you
 go. Mark progress with `supervisectl subtask done <id>`. If the user asks for something new mid-run, record it
 with `supervisectl subtask add "<title>" --origin user`; that returns the run to implementing without using a
-fix round.
+fix round. After a failed verify or a blocking review, run `supervisectl fix` first and add it in that round.
 
 **Verify.** `supervisectl verify` runs every gate and compares failures with the baseline. It takes as long as the
 project's checks, so give the Bash call a generous timeout. Verification is the CLI's job; do not hand it to a
