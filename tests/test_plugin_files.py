@@ -48,7 +48,7 @@ def test_agents() -> None:
 
 def test_hooks_call_the_bundled_cli() -> None:
     hooks = json.loads((REPO / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert sorted(hooks) == ["PreToolUse", "SubagentStop"]
+    assert sorted(hooks) == ["PreToolUse", "SubagentStart", "SubagentStop"]
     for entries in hooks.values():
         for entry in entries:
             for handler in entry["hooks"]:

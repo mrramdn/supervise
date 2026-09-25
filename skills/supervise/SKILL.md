@@ -68,12 +68,13 @@ project's checks, so give the Bash call a generous timeout. Verification is the 
 subagent. A gate that already failed at baseline passes only if its output is unchanged.
 
 **Review.** `supervisectl review begin` writes the diff and prints a brief. Call the Agent tool with
-`subagent_type: "supervise:code-reviewer"` and that brief. When it finishes, run `supervisectl review record`;
-the CLI reads the reviewer's findings from the hook (waiting a few seconds for the hook if needed) and decides which
-ones block. If it refuses because the reply has no findings JSON, copy every finding from the reviewer's reply, as
-written, into `supervisectl review record --findings -`; the report marks the review as transcribed and keeps the
-reply. Do not act on findings before they are recorded. Keep your hands off the files from `review begin` until
-`accept`: any edit changes the tree fingerprint and accept will refuse.
+`subagent_type: "supervise:code-reviewer"` and that brief; a reviewer started before this `review begin` read an
+older diff and does not count. When it finishes, run `supervisectl review record`; the CLI reads the reviewer's
+findings from the hook (waiting a few seconds for the hook if needed) and decides which ones block. If it refuses
+because the reply has no findings JSON, copy every finding from the reviewer's reply, as written, into
+`supervisectl review record --findings -`; the report marks the review as transcribed and keeps the reply. Do not
+act on findings before they are recorded. Keep your hands off the files from `review begin` until `accept`: any
+edit changes the tree fingerprint and accept will refuse.
 A diff of at most 10 lines since the last independent review may be reviewed by you instead:
 `supervisectl review record --self --reason "<why>" --findings -` with `{"findings": [...]}` on stdin. The report
 lists every self-review.

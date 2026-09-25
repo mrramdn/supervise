@@ -1,7 +1,7 @@
 # Design
 
 `supervise` is a Claude Code plugin with four parts: the `/supervise` skill (instructions), the `supervisectl` CLI
-(state and rules), two agents (`supervise:implementer`, and the read-only `supervise:code-reviewer`), and two hooks.
+(state and rules), two agents (`supervise:implementer`, and the read-only `supervise:code-reviewer`), and three hooks.
 The model does the work and calls the CLI at every phase change. The CLI owns the run state and refuses a change
 that breaks a rule (exit 2, state untouched, with the rule and the next step in the message). The rules therefore
 hold whether or not the model remembers them.
@@ -23,9 +23,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 - **Gates.** A gate passes on exit 0. A gate that failed at baseline counts as "same as baseline" only with the same
   exit code and the same output once durations, timestamps, addresses, and ANSI codes are removed. Without a gate
   of kind `test`, output says NO TESTS.
-- **Review evidence.** The SubagentStop hook appends each finished subagent to `runs/<id>/events.jsonl`, with the
-  reviewer's final reply. `review record` accepts only a `supervise:code-reviewer` stop after `review begin` and
-  parses the findings itself; `block_on_severity` (default `high`) decides what blocks. A finding with
+- **Review evidence.** The SubagentStart and SubagentStop hooks append each subagent's start and stop to
+  `runs/<id>/events.jsonl`, the stop with the reviewer's final reply. `review record` accepts only a
+  `supervise:code-reviewer` that started and stopped after `review begin` (matched by `agent_id`) and parses the
+  findings itself; `block_on_severity` (default `high`) decides what blocks. A finding with
   `"kind": "acceptance"` (an acceptance criterion not met or not shown) blocks at any severity.
 - **Fix rounds.** `fix` after a failed verify or a blocking review uses a round. When all `max_fix_rounds` are used,
   the next `fix` escalates the run, and only `override` (typed by the user) continues it. The PreToolUse hook denies
@@ -90,8 +91,8 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 ## Deviations from the plan
 
 - The plan lists two hooks. S3 and S8 also suggested denying non-supervise Agent calls and guarding writes to
-  `.supervise/`; v0.1 keeps two hooks. A substituted reviewer cannot pass `review record`, which covers the failure
-  that mattered (a silent `general-purpose` reviewer).
+  `.supervise/`; v0.1 kept two hooks, and 1.0.1 added SubagentStart (below). A substituted reviewer cannot pass
+  `review record`, which covers the failure that mattered (a silent `general-purpose` reviewer).
 - The plan names only `review record`; the reviewer's findings are taken from the hook event (see Decisions).
 - The reviewer's reply is `last_assistant_message`, except when the subagent handed its report back through the
   `SubagentHandback` tool (seen in dogfooding on Claude Code 2.1.280): the final message is then only a note, so the
@@ -106,3 +107,11 @@ on a real run: the SubagentStop hook recorded `agent_type: supervise:code-review
 above. The same run showed two gate pitfalls now handled in the output: a test gate that cannot start (pytest
 missing) fails the same way before and after, which `verify`, `accept`, and `report` now point out, and an
 unignored `__pycache__/` makes the gates change the tree.
+
+## Checked on 2026-09-25
+
+A reviewer that started before `review begin` counted for the next review: with background subagents, a reviewer of
+`review-1.diff` that finished after `review begin` #2 passed review #2, and `accept` took a tree nobody reviewed.
+1.0.1 records SubagentStart too. A nested session on Claude Code 2.1.282 showed that SubagentStart carries
+`agent_type: supervise:code-reviewer` and the same `agent_id` as the matching SubagentStop, so `review record` counts
+a reviewer only when both events came after `review begin`.

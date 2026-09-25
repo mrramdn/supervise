@@ -109,7 +109,21 @@ class Project:
             timeout=30,
         )
 
-    def subagent_stop(self, agent_type: str, message: str, agent_id: str = "agent-1") -> None:
+    def subagent_start(self, agent_type: str, agent_id: str = "agent-1") -> None:
+        payload = {
+            "hook_event_name": "SubagentStart",
+            "session_id": "session-1",
+            "cwd": str(self.root),
+            "agent_type": agent_type,
+            "agent_id": agent_id,
+        }
+        result = self.hook("SubagentStart", payload)
+        assert (result.returncode, result.stdout) == (0, ""), result.stderr
+
+    def subagent_stop(self, agent_type: str, message: str, agent_id: str = "agent-1", *, started: bool = True) -> None:
+        """A subagent that ends now. With `started`, it also starts now; else its start was sent earlier (or never)."""
+        if started:
+            self.subagent_start(agent_type, agent_id)
         payload = {
             "hook_event_name": "SubagentStop",
             "session_id": "session-1",

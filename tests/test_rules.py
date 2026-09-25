@@ -244,6 +244,28 @@ def test_user_request_cannot_skip_the_fix_round_of_a_negative_result(project: Pr
     assert project.state()["status"] == "escalated"
 
 
+def test_reviewer_started_before_review_begin_does_not_count(project: Project) -> None:
+    project.configure(TEST_GATE)
+    project.start()
+    project.write("app.txt", "ok v2\n")
+    project.ok("verify")
+    project.ok("review", "begin")
+    project.subagent_start(REVIEWER, "old-reviewer")  # reads review-1.diff in the background
+
+    project.write("app.txt", "ok v3, never reviewed\n")
+    project.ok("verify")
+    project.ok("review", "begin")
+    project.subagent_stop(REVIEWER, '{"findings": []}', "old-reviewer", started=False)
+    refused = project.refused("review", "record", "--wait", "0")
+    assert "started before `review begin`" in refused.stderr
+    assert "old-reviewer" in refused.stderr
+    project.refused("accept")
+
+    project.reviewer_says([])
+    assert "clean, independent" in project.ok("review", "record")
+    assert project.state()["reviews"][-1]["agent_ids"] == ["agent-1"]
+
+
 def test_start_in_home_is_refused(project: Project) -> None:
     env = {**project.env, "HOME": str(project.root)}
     for args in (["init"], ["start", "task"], ["status"]):

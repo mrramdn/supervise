@@ -75,6 +75,21 @@ def agent_stops(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [e for e in events if e.get("event") == "subagent_stop" and e.get("agent_type")]
 
 
+def reviewer_stops(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Reviewer stops in `events` (those since `review begin`): (started in `events`, started before them).
+
+    A reviewer that started before `review begin` read an older diff, so only the first list is evidence.
+    """
+    started = {
+        e.get("agent_id") for e in events if e.get("event") == "subagent_start" and e.get("agent_type") == REVIEWER
+    }
+    fresh, stale = [], []
+    for stop in agent_stops(events):
+        if stop["agent_type"] == REVIEWER:
+            (fresh if stop.get("agent_id") and stop["agent_id"] in started else stale).append(stop)
+    return fresh, stale
+
+
 def next_step(state: State) -> str:
     status, phase = state["status"], state["phase"]
     if status == "paused":
@@ -643,7 +658,7 @@ def wait_for_reviewer(project: Project, seconds: float) -> None:
         return
     run_dir, deadline = project.run_dir(run_id), time.monotonic() + seconds
     waiting = False
-    while not any(e["agent_type"] == REVIEWER for e in agent_stops(read_events(run_dir)[review["events_offset"] :])):
+    while not reviewer_stops(read_events(run_dir)[review["events_offset"] :])[0]:
         if time.monotonic() >= deadline:
             return
         if not waiting:
@@ -693,14 +708,23 @@ def cmd_review_record(args: argparse.Namespace) -> int:
             transcribed, reply = False, ""
         else:
             run_dir = project.run_dir(state["run_id"])
-            stops = agent_stops(read_events(run_dir)[review["events_offset"] :])
-            mine = [e for e in stops if e["agent_type"] == REVIEWER]
+            events = read_events(run_dir)[review["events_offset"] :]
+            mine, stale = reviewer_stops(events)
+            if not mine and stale:
+                raise Refused(
+                    f"the {REVIEWER} that finished started before `review begin`",
+                    f"Agent {', '.join(str(e.get('agent_id')) for e in stale)} reviewed an older diff, not review"
+                    f" #{review['n']}.",
+                    f'run the Agent tool with subagent_type "{REVIEWER}" and the brief from the last `review begin`,'
+                    " then this command again",
+                )
             if not mine:
-                seen = sorted({str(e["agent_type"]) for e in stops})
+                seen = sorted({str(e["agent_type"]) for e in agent_stops(events)})
                 raise Refused(
                     f"no result from {REVIEWER} since `review begin`",
-                    f"A review counts as independent only when a {REVIEWER} subagent finishes after `review begin`"
-                    " (the SubagentStop hook records it)." + (f" Seen instead: {', '.join(seen)}." if seen else ""),
+                    f"A review counts as independent only when a {REVIEWER} subagent starts and finishes after"
+                    " `review begin` (the SubagentStart and SubagentStop hooks record it)."
+                    + (f" Seen instead: {', '.join(seen)}." if seen else ""),
                     f'run the Agent tool with subagent_type "{REVIEWER}" and the brief from `review begin`, then '
                     f"this command again (a diff of at most {SELF_REVIEW_MAX_LINES} lines may use --self --reason)",
                 )
