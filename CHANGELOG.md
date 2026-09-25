@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-25
+
+### Fixed
+
+- `subtask add --origin user` after a failed verify or a blocking review returned the run to IMPLEMENT without a
+  fix round, so the fix-round cap could be skipped. It is now refused until `supervisectl fix` has counted the
+  round; within the fix round, a new request from the user is added as before.
+- A `supervise:code-reviewer` that started before `review begin`, such as a background reviewer of an older diff,
+  counted as the review of the current tree. A new SubagentStart hook records each start, and `review record`
+  counts only reviewers that started and finished after `review begin`. A review begun under 1.0.0 needs
+  `supervisectl review begin` again.
+
+### Changed
+
+- The skill runs `start` and `verify` in the background when the gates can take longer than a Bash call may run
+  (10 minutes by default); a verify stopped by the Bash timeout records nothing.
+- CI runs lint and tests on Python 3.11 to 3.14, on Linux and macOS.
+- The package classifiers say Production/Stable, Linux, and macOS.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added
@@ -56,5 +75,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.1]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.0...supervise--v1.0.1
 [1.0.0]: https://github.com/mrramdn/supervise/compare/supervise--v0.1.0...supervise--v1.0.0
 [0.1.0]: https://github.com/mrramdn/supervise/releases/tag/supervise--v0.1.0
