@@ -37,3 +37,16 @@ jobs:
       - name: Check commit messages
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: make check-commits
+
+  validate:
+    name: validate the plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Pinned like the actions above; raise it with each Claude Code release supervise is checked against.
+      - name: Install Claude Code
+        run: npm install --global @anthropic-ai/claude-code@2.1.283
+      - name: Validate skills, agents, hooks, and the marketplace (--strict)
+        run: make validate
