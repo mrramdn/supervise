@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   counted as the review of the current tree. A new SubagentStart hook, matched to the reviewer only, records each
   start, and `review record` counts only reviewers that started and finished after `review begin`. A review begun
   under 1.0.0 needs `supervisectl review begin` again.
+- Two runs started in the same second could sort in the wrong order, so `commit` and `report` without `--run`
+  took the older run as the latest. Run ids now end in sub-second digits instead of random ones.
 
 ### Changed
 

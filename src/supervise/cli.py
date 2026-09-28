@@ -10,7 +10,6 @@ import argparse
 import json
 import math
 import re
-import secrets
 import subprocess
 import sys
 import time
@@ -360,7 +359,9 @@ def cmd_start(args: argparse.Namespace) -> int:
                     f"Task: {other['task']}",
                     'finish it (`supervisectl status`), or `supervisectl abort --reason "..."` if the user drops it',
                 )
-        run_id = time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
+        # Ids sort in start order (latest_run_id relies on it), also for two runs in the same second.
+        ns = time.time_ns()
+        run_id = time.strftime("%Y%m%d-%H%M%S-", time.localtime(ns // 10**9)) + f"{ns // 10**5 % 10**4:04d}"
         run_dir = project.run_dir(run_id)
         run_dir.mkdir(parents=True)
         tree, head = project.fingerprint(), project.head()
