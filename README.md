@@ -15,7 +15,7 @@ supervise started as a markdown skill I used to run plan → implement → revie
 |---|---|
 | Work accepted without verification, or edited after the review passed | `accept` needs a passing verify and a clean review whose working-tree fingerprints both equal the current tree. Any edit after review means verify and review again. |
 | Run state written by hand by the model, then wrong or lost | State lives in `.supervise/runs/<id>/state.json`, written only by the CLI. A run can be paused and resumed from another session. |
-| A missing reviewer agent silently replaced by a generic one | A review counts only if a `supervise:code-reviewer` subagent finished after `review begin`, as recorded by a hook. Its findings are read from its own reply, not passed on by the orchestrator. |
+| A missing reviewer agent silently replaced by a generic one | A review counts only if a `supervise:code-reviewer` subagent started and finished after `review begin`, as recorded by hooks. Its findings are read from its own reply, not passed on by the orchestrator. |
 | A project without tests reported as passing | Without a gate of kind `test`, `status`, `verify`, `accept`, and `report` say NO TESTS. |
 | Fix loops with no end | Each fix after a failed verify or blocking review uses a round; at the cap the run escalates, and only the user can raise it. |
 
@@ -23,8 +23,8 @@ Each row is covered by an end-to-end test in `tests/` that drives the real CLI i
 
 ## Quickstart
 
-Requirements: Claude Code, git, and Python 3.11 or newer on Linux or macOS. The CLI uses the standard library
-only; there is nothing else to install.
+Requirements: Claude Code 2.1.280 or newer, git, and Python 3.11 or newer on Linux or macOS. The CLI uses the
+standard library only; there is nothing else to install.
 
 From GitHub:
 
@@ -75,8 +75,9 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 - `verify` runs the gates and records the fingerprint of the working tree (its git tree id, untracked files
   included, ignored files excluded).
 - `review begin` writes the diff and a brief for the read-only `supervise:code-reviewer` agent (Read, Grep, Glob
-  only). A SubagentStop hook records the reviewer's reply, and `review record` parses its findings. Findings at or
-  above `high` (configurable), and any unmet acceptance criterion from the plan, block.
+  only). SubagentStart and SubagentStop hooks record the reviewer and its reply, and `review record` parses its
+  findings. A reviewer started before `review begin` does not count. Findings at or above `high` (configurable),
+  and any unmet acceptance criterion from the plan, block.
 - `accept` passes only when verify and review ran on the current tree.
 - `commit`, if you ask for it, commits exactly the accepted tree with a Conventional Commits message.
 
@@ -136,7 +137,8 @@ supervise is a thin layer of state, rules, and evidence around one task at a tim
 - Gate output is stored as is under `.supervise/`. Secrets that a gate prints are not redacted.
 - The CLI guards against drift, not against a hostile agent: nothing stops a process from editing `.supervise/`
   by hand.
-- Designed and tested with Opus 5.5 in Claude Code. Other models may follow the skill less well.
+- Designed and tested with Opus 5.5 in Claude Code 2.1.280 to 2.1.283. Other models may follow the skill less
+  well. The hooks use exec form, which older Claude Code versions do not run correctly.
 - `/supervise:supervise` always works. The short `/supervise` can resolve to a different skill of the same name,
   such as one in `~/.claude/skills/`, without a warning.
 

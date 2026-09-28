@@ -92,6 +92,37 @@ def _handback(transcript: Any) -> str | None:
     return found
 
 
+def _event(name: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event": name,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "agent_type": data.get("agent_type"),
+        "agent_id": data.get("agent_id"),
+        "session_id": data.get("session_id"),
+    }
+
+
+def _append(state_dir: Path, event: dict[str, Any]) -> None:
+    """Append `event` to the active run's events.jsonl under a short flock of its own (never the state lock)."""
+    run_id = (state_dir / "current").read_text(encoding="utf-8").strip()
+    run_dir = state_dir / "runs" / run_id
+    if not run_id or not run_dir.is_dir():
+        return
+    line = (json.dumps(event, ensure_ascii=False) + "\n").encode()
+    fd = os.open(run_dir / "events.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
+def subagent_start(data: dict[str, Any], state_dir: Path) -> None:
+    """Record the start, so `review record` can tell a reviewer of the current diff from one of an older diff."""
+    if data.get("agent_type"):
+        _append(state_dir, _event("subagent_start", data))
+
+
 def subagent_stop(data: dict[str, Any], state_dir: Path) -> None:
     """Append the stop to the active run's events; `review record` reads reviewer results from there.
 
@@ -100,17 +131,7 @@ def subagent_stop(data: dict[str, Any], state_dir: Path) -> None:
     """
     if not data.get("agent_type"):
         return
-    run_id = (state_dir / "current").read_text(encoding="utf-8").strip()
-    run_dir = state_dir / "runs" / run_id
-    if not run_id or not run_dir.is_dir():
-        return
-    event: dict[str, Any] = {
-        "event": "subagent_stop",
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "agent_type": data.get("agent_type"),
-        "agent_id": data.get("agent_id"),
-        "session_id": data.get("session_id"),
-    }
+    event = _event("subagent_stop", data)
     if data.get("agent_type") == REVIEWER:
         final = str(data.get("last_assistant_message") or "")
         handback = _handback(data.get("agent_transcript_path"))
@@ -118,13 +139,7 @@ def subagent_stop(data: dict[str, Any], state_dir: Path) -> None:
         if handback is not None and handback != final:
             event["final_message"] = final[:MAX_MESSAGE]
         event["transcript"] = data.get("agent_transcript_path")
-    line = (json.dumps(event, ensure_ascii=False) + "\n").encode()
-    fd = os.open(run_dir / "events.jsonl", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        os.write(fd, line)
-    finally:
-        os.close(fd)
+    _append(state_dir, event)
 
 
 def main(argv: list[str]) -> int:
@@ -137,10 +152,10 @@ def main(argv: list[str]) -> int:
             return 0
         if event == "pre-tool-use":
             pre_tool_use(data)
-        elif event == "subagent-stop":
+        elif event in ("subagent-start", "subagent-stop"):
             state_dir = _state_dir(str(data.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()))
             if state_dir is not None:
-                subagent_stop(data, state_dir)
+                (subagent_start if event == "subagent-start" else subagent_stop)(data, state_dir)
         else:
             _log(None, f"unknown hook event {event!r}")
     except Exception as exc:

@@ -81,6 +81,7 @@ def test_findings_come_from_the_handback_not_from_a_quote_in_the_closing_note(pr
         "agent_transcript_path": str(transcript),
         "last_assistant_message": note,
     }
+    project.subagent_start(REVIEWER, "agent-2")
     assert project.hook("SubagentStop", payload).returncode == 0
     out = project.ok("review", "record")
     assert "clean, independent; 0 blocking, 1 non-blocking" in out
