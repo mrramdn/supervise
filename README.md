@@ -54,6 +54,10 @@ On the first run Claude calls `supervisectl init`, which detects the gates (comm
 Every phase change is a `supervisectl` call. To stop Claude Code from asking permission for each one, allow
 `Bash(supervisectl *)` in your settings.
 
+`supervisectl` is on PATH only inside Claude Code: the plugin's `bin/` is added for Claude's Bash calls, not for
+your own shell, and the install path changes with every plugin version. When you need the CLI yourself, type it in
+the Claude Code prompt with `!`, as in `! supervisectl status`.
+
 ## How it works
 
 There are two sides:
