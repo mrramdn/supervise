@@ -84,8 +84,9 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 The plugin also ships `supervise:implementer` for large, independent subtasks, and a PreToolUse hook that denies
 `supervisectl override` to the model. `override` is typed by you with `!` in the prompt.
 
-Design notes and the reasons behind each rule are in [DESIGN.md](DESIGN.md); the full CLI reference is
-[skills/supervise/references/cli.md](skills/supervise/references/cli.md).
+The [documentation](docs/README.md) covers getting started, the concepts behind each rule, configuration, and
+troubleshooting. Design notes and the reasons behind each rule are in [DESIGN.md](DESIGN.md); the full CLI
+reference is [skills/supervise/references/cli.md](skills/supervise/references/cli.md).
 
 ## Commands
 
