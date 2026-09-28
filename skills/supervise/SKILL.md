@@ -64,10 +64,11 @@ with `supervisectl subtask add "<title>" --origin user`; that returns the run to
 fix round. After a failed verify or a blocking review, run `supervisectl fix` first and add it in that round.
 
 **Verify.** `supervisectl verify` runs every gate and compares failures with the baseline. It takes as long as the
-project's checks. A Bash call stops after 10 minutes at most by default, and a stopped verify records nothing, so
-when the gates can take longer, run `verify` (and `start`, which runs them for the baseline) in the background and
-wait for it to finish. Verification is the CLI's job; do not hand it to a subagent. A gate that already failed at
-baseline passes only if its output is unchanged.
+project's checks, so give the Bash call a timeout above their run time. If the timeout runs out first, Claude Code
+moves the command to the background, where it keeps running: wait for it to finish and read its result before the
+next `supervisectl` command. The same holds for `start`, which runs the gates for the baseline. Verification is the
+CLI's job; do not hand it to a subagent. A gate that already failed at baseline passes only if its output is
+unchanged.
 
 **Review.** `supervisectl review begin` writes the diff and prints a brief. Call the Agent tool with
 `subagent_type: "supervise:code-reviewer"` and that brief; a reviewer started before this `review begin` read an
