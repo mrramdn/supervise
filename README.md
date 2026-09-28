@@ -23,8 +23,8 @@ Each row is covered by an end-to-end test in `tests/` that drives the real CLI i
 
 ## Quickstart
 
-Requirements: Claude Code, git, and Python 3.11 or newer on Linux or macOS. The CLI uses the standard library
-only; there is nothing else to install.
+Requirements: Claude Code 2.1.280 or newer, git, and Python 3.11 or newer on Linux or macOS. The CLI uses the
+standard library only; there is nothing else to install.
 
 From GitHub:
 
@@ -137,7 +137,8 @@ supervise is a thin layer of state, rules, and evidence around one task at a tim
 - Gate output is stored as is under `.supervise/`. Secrets that a gate prints are not redacted.
 - The CLI guards against drift, not against a hostile agent: nothing stops a process from editing `.supervise/`
   by hand.
-- Designed and tested with Opus 5.5 in Claude Code. Other models may follow the skill less well.
+- Designed and tested with Opus 5.5 in Claude Code 2.1.280 to 2.1.283. Other models may follow the skill less
+  well. The hooks use exec form, which older Claude Code versions do not run correctly.
 - `/supervise:supervise` always works. The short `/supervise` can resolve to a different skill of the same name,
   such as one in `~/.claude/skills/`, without a warning.
 

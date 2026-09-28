@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -17,11 +18,21 @@ REVIEWER = "supervise:code-reviewer"
 TEST_GATE = ("test", "grep -q ok app.txt", "test")
 
 
-def hook_command(event: str) -> str:
-    """The single command hooks/hooks.json registers for `event`."""
+def hook_handler(event: str) -> tuple[str, dict[str, Any]]:
+    """The matcher and the single handler hooks/hooks.json registers for `event`."""
     [entry] = json.loads((REPO / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"][event]
     [handler] = entry["hooks"]
-    return handler["command"]
+    return entry.get("matcher", ""), handler
+
+
+def matches(matcher: str, value: str) -> bool:
+    """Claude Code's matcher rules: empty or `*` match all; a matcher of only letters, digits, `_`, `-`, spaces, `,`
+    and `|` lists exact names; anything else is an unanchored JavaScript regular expression."""
+    if matcher in ("", "*"):
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_\- ,|]+", matcher):
+        return value in {name.strip() for name in re.split(r"[|,]", matcher)}
+    return re.search(matcher, value) is not None
 
 
 class Project:
@@ -96,11 +107,16 @@ class Project:
         self.ok("plan", "set", "-", stdin=json.dumps(plan))
         return out
 
-    def hook(self, event: str, payload: dict[str, Any]) -> subprocess.CompletedProcess[str]:
-        """Run the hooks.json command for `event` through /bin/sh, as Claude Code does."""
+    def hook(self, event: str, payload: dict[str, Any]) -> subprocess.CompletedProcess[str] | None:
+        """Run the hooks.json handler for `event` as Claude Code does: in exec form, with `${CLAUDE_PLUGIN_ROOT}`
+        substituted, and only when its matcher accepts the event (None otherwise)."""
+        matcher, handler = hook_handler(event)
+        if not matches(matcher, str(payload.get("tool_name" if event == "PreToolUse" else "agent_type") or "")):
+            return None
+        argv = [part.replace("${CLAUDE_PLUGIN_ROOT}", str(REPO)) for part in [handler["command"], *handler["args"]]]
         env = {**self.env, "CLAUDE_PLUGIN_ROOT": str(REPO), "CLAUDE_PROJECT_DIR": str(self.root)}
         return subprocess.run(
-            ["/bin/sh", "-c", hook_command(event)],
+            argv,
             cwd=self.root,
             env=env,
             input=json.dumps(payload),
@@ -118,7 +134,8 @@ class Project:
             "agent_id": agent_id,
         }
         result = self.hook("SubagentStart", payload)
-        assert (result.returncode, result.stdout) == (0, ""), result.stderr
+        if result is not None:  # None: the matcher skips agents other than the reviewer
+            assert (result.returncode, result.stdout) == (0, ""), result.stderr
 
     def subagent_stop(self, agent_type: str, message: str, agent_id: str = "agent-1", *, started: bool = True) -> None:
         """A subagent that ends now. With `started`, it also starts now; else its start was sent earlier (or never)."""
@@ -133,6 +150,7 @@ class Project:
             "last_assistant_message": message,
         }
         result = self.hook("SubagentStop", payload)
+        assert result is not None
         assert (result.returncode, result.stdout) == (0, ""), result.stderr
 
     def reviewer_says(self, findings: list[dict[str, Any]]) -> None:

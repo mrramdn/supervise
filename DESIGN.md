@@ -73,7 +73,8 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 
 - **S1.** No ``!`…` `` dynamic-context line in SKILL.md; the skill's first step is `supervisectl status`.
   `/supervise:supervise` is the form that always works while the old user skill exists.
-- **S2.** `bin/` is on PATH for Bash but not for hooks, so hooks.json calls `"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl"`.
+- **S2.** `bin/` is on PATH for Bash but not for hooks, so hooks.json calls `${CLAUDE_PLUGIN_ROOT}/bin/supervisectl`,
+  in exec form since 1.0.1 (below).
   `allowed-tools` only covers the turn that invoked the skill; SKILL.md tells the user how to allow
   `Bash(supervisectl *)`.
 - **S3, S5.** Agents are addressed as `supervise:*`. Review evidence is SubagentStop `agent_type` (canonical, no
@@ -81,9 +82,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   there is no TTY check.
 - **S4.** Agents set `model: inherit` and no `effort`.
 - **S8.** The PreToolUse hook uses matcher `Bash` plus `if: "Bash(*supervisectl*)"`, so unrelated Bash calls start
-  no process. It denies `override` whether or not a run is open. The SubagentStop hook has no shell prefilter: it
-  walks up from the session's cwd to the repository root (sessions opened in a subdirectory), and subagent stops
-  are rare.
+  no process. It denies `override` whether or not a run is open. The SubagentStop hook has no prefilter: it walks
+  up from the session's cwd to the repository root (sessions opened in a subdirectory), subagent stops are rare,
+  and the report counts every agent. The SubagentStart hook (1.0.1) matches only `^supervise:code-reviewer$`,
+  since only the reviewer's start is evidence.
 - **S9.** `make validate` runs `claude plugin validate --strict` on `plugin.json` (skills, agents, hooks) and on the
   directory (marketplace). `tests/test_plugin_files.py` covers what `--strict` misses. The skill description was
   trimmed; `claude plugin details` projects about 276 always-on tokens for the plugin.
