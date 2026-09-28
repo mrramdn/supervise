@@ -7,7 +7,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from conftest import REPO
+from conftest import REPO, REVIEWER, hook_handler, matches
 
 SKILL = REPO / "skills" / "supervise" / "SKILL.md"
 
@@ -48,11 +48,22 @@ def test_agents() -> None:
 
 def test_hooks_call_the_bundled_cli() -> None:
     hooks = json.loads((REPO / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
-    assert sorted(hooks) == ["PreToolUse", "SubagentStop"]
-    for entries in hooks.values():
+    assert sorted(hooks) == ["PreToolUse", "SubagentStart", "SubagentStop"]
+    events = {"PreToolUse": "pre-tool-use", "SubagentStart": "subagent-start", "SubagentStop": "subagent-stop"}
+    for event, entries in hooks.items():
         for entry in entries:
             for handler in entry["hooks"]:
-                assert handler["command"].startswith('"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl" hook ')
+                # Exec form: no shell, so the plugin path needs no quoting (hooks docs, Claude Code 2.1.139+).
+                assert handler["command"] == "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl"
+                assert handler["args"] == ["hook", events[event]]
+
+
+def test_subagent_start_hook_runs_only_for_the_reviewer() -> None:
+    matcher, _ = hook_handler("SubagentStart")
+    assert matches(matcher, REVIEWER)
+    for other in ("general-purpose", "supervise:implementer", "supervise:code-reviewer-2", "x-supervise:code-reviewer"):
+        assert not matches(matcher, other), other
+    assert hook_handler("SubagentStop")[0] == ""  # every stop: the report counts them and names non-reviewers
 
 
 def test_versions_agree() -> None:

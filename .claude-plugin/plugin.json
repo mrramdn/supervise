@@ -1,11 +1,12 @@
 {
   "name": "supervise",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Checkpointed plan, implement, verify, and independent review workflow for Claude Code. A bundled CLI keeps the run state in the project and accepts work only when the project's gates pass and a read-only review is clean for the exact final working tree.",
   "author": {
     "name": "mrramdn"
   },
   "license": "MIT",
+  "homepage": "https://github.com/mrramdn/supervise#readme",
   "repository": "https://github.com/mrramdn/supervise",
   "keywords": [
     "workflow",

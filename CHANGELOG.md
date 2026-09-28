@@ -5,6 +5,30 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-28
+
+### Fixed
+
+- `subtask add --origin user` after a failed verify or a blocking review returned the run to IMPLEMENT without a
+  fix round, so the fix-round cap could be skipped. It is now refused until `supervisectl fix` has counted the
+  round; within the fix round, a new request from the user is added as before.
+- A `supervise:code-reviewer` that started before `review begin`, such as a background reviewer of an older diff,
+  counted as the review of the current tree. A new SubagentStart hook, matched to the reviewer only, records each
+  start, and `review record` counts only reviewers that started and finished after `review begin`. A review begun
+  under 1.0.0 needs `supervisectl review begin` again.
+- Two runs started in the same second could sort in the wrong order, so `commit` and `report` without `--run`
+  took the older run as the latest. Run ids now end in sub-second digits instead of random ones.
+
+### Changed
+
+- The hooks run in exec form (`command` plus `args`), as the Claude Code hooks docs advise for a hook that names
+  `${CLAUDE_PLUGIN_ROOT}`: no shell starts, and the plugin path needs no quoting. The README now asks for Claude
+  Code 2.1.280 or newer, the oldest version supervise was tested on.
+- The skill gives `start` and `verify` a Bash timeout above the gates' run time, and when Claude Code moves a call
+  that outlasts it to the background, waits for it to finish before the next `supervisectl` command.
+- CI runs lint and tests on Python 3.11 to 3.14, on Linux and macOS, and runs `claude plugin validate --strict`.
+- `plugin.json` has a `homepage`, and the package classifiers say Production/Stable, Linux, and macOS.
+
 ## [1.0.0] - 2026-09-24
 
 ### Added
@@ -56,5 +80,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.1]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.0...supervise--v1.0.1
 [1.0.0]: https://github.com/mrramdn/supervise/compare/supervise--v0.1.0...supervise--v1.0.0
 [0.1.0]: https://github.com/mrramdn/supervise/releases/tag/supervise--v0.1.0

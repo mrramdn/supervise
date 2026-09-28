@@ -7,7 +7,21 @@
           {
             "type": "command",
             "if": "Bash(*supervisectl*)",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl\" hook pre-tool-use",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl",
+            "args": ["hook", "pre-tool-use"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "^supervise:code-reviewer$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl",
+            "args": ["hook", "subagent-start"],
             "timeout": 10
           }
         ]
@@ -18,7 +32,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/supervisectl\" hook subagent-stop",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl",
+            "args": ["hook", "subagent-stop"],
             "timeout": 10
           }
         ]

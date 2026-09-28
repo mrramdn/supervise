@@ -10,7 +10,6 @@ import argparse
 import json
 import math
 import re
-import secrets
 import subprocess
 import sys
 import time
@@ -73,6 +72,21 @@ def rounds_text(state: State) -> str:
 def agent_stops(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Subagent stops with an agent type. Older event files also hold typeless internal stops; they are skipped."""
     return [e for e in events if e.get("event") == "subagent_stop" and e.get("agent_type")]
+
+
+def reviewer_stops(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Reviewer stops in `events` (those since `review begin`): (started in `events`, started before them).
+
+    A reviewer that started before `review begin` read an older diff, so only the first list is evidence.
+    """
+    started = {
+        e.get("agent_id") for e in events if e.get("event") == "subagent_start" and e.get("agent_type") == REVIEWER
+    }
+    fresh, stale = [], []
+    for stop in agent_stops(events):
+        if stop["agent_type"] == REVIEWER:
+            (fresh if stop.get("agent_id") and stop["agent_id"] in started else stale).append(stop)
+    return fresh, stale
 
 
 def next_step(state: State) -> str:
@@ -345,7 +359,9 @@ def cmd_start(args: argparse.Namespace) -> int:
                     f"Task: {other['task']}",
                     'finish it (`supervisectl status`), or `supervisectl abort --reason "..."` if the user drops it',
                 )
-        run_id = time.strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
+        # Ids sort in start order (latest_run_id relies on it), also for two runs in the same second.
+        ns = time.time_ns()
+        run_id = time.strftime("%Y%m%d-%H%M%S-", time.localtime(ns // 10**9)) + f"{ns // 10**5 % 10**4:04d}"
         run_dir = project.run_dir(run_id)
         run_dir.mkdir(parents=True)
         tree, head = project.fingerprint(), project.head()
@@ -451,6 +467,14 @@ def cmd_subtask_add(args: argparse.Namespace) -> int:
         state = open_run(project)
         require_phase(state, "subtask add", "IMPLEMENT", "FIX", "VERIFY", "REVIEW")
         back = state["phase"] in ("VERIFY", "REVIEW")
+        if back and needs_fix(state):
+            # Otherwise going back to IMPLEMENT would repair a failed gate or a blocking review without a fix round.
+            raise Refused(
+                "the last result is negative, so `supervisectl fix` comes first",
+                "A failed gate or a blocking review is repaired in a fix round; a new request from the user is added"
+                " in that round.",
+                "`supervisectl fix`, then `supervisectl subtask add` if the user asked for more",
+            )
         if back and args.origin != "user":
             raise Refused(
                 "new work after verify goes through `supervisectl fix`",
@@ -635,7 +659,7 @@ def wait_for_reviewer(project: Project, seconds: float) -> None:
         return
     run_dir, deadline = project.run_dir(run_id), time.monotonic() + seconds
     waiting = False
-    while not any(e["agent_type"] == REVIEWER for e in agent_stops(read_events(run_dir)[review["events_offset"] :])):
+    while not reviewer_stops(read_events(run_dir)[review["events_offset"] :])[0]:
         if time.monotonic() >= deadline:
             return
         if not waiting:
@@ -685,14 +709,23 @@ def cmd_review_record(args: argparse.Namespace) -> int:
             transcribed, reply = False, ""
         else:
             run_dir = project.run_dir(state["run_id"])
-            stops = agent_stops(read_events(run_dir)[review["events_offset"] :])
-            mine = [e for e in stops if e["agent_type"] == REVIEWER]
+            events = read_events(run_dir)[review["events_offset"] :]
+            mine, stale = reviewer_stops(events)
+            if not mine and stale:
+                raise Refused(
+                    f"the {REVIEWER} that finished started before `review begin`",
+                    f"Agent {', '.join(str(e.get('agent_id')) for e in stale)} reviewed an older diff, not review"
+                    f" #{review['n']}.",
+                    f'run the Agent tool with subagent_type "{REVIEWER}" and the brief from the last `review begin`,'
+                    " then this command again",
+                )
             if not mine:
-                seen = sorted({str(e["agent_type"]) for e in stops})
+                seen = sorted({str(e["agent_type"]) for e in agent_stops(events)})
                 raise Refused(
                     f"no result from {REVIEWER} since `review begin`",
-                    f"A review counts as independent only when a {REVIEWER} subagent finishes after `review begin`"
-                    " (the SubagentStop hook records it)." + (f" Seen instead: {', '.join(seen)}." if seen else ""),
+                    f"A review counts as independent only when a {REVIEWER} subagent starts and finishes after"
+                    " `review begin` (the SubagentStart and SubagentStop hooks record it)."
+                    + (f" Seen instead: {', '.join(seen)}." if seen else ""),
                     f'run the Agent tool with subagent_type "{REVIEWER}" and the brief from `review begin`, then '
                     f"this command again (a diff of at most {SELF_REVIEW_MAX_LINES} lines may use --self --reason)",
                 )
