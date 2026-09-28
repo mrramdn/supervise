@@ -117,3 +117,13 @@ A reviewer that started before `review begin` counted for the next review: with 
 1.0.1 records SubagentStart too. A nested session on Claude Code 2.1.282 showed that SubagentStart carries
 `agent_type: supervise:code-reviewer` and the same `agent_id` as the matching SubagentStop, so `review record` counts
 a reviewer only when both events came after `review begin`.
+
+## Checked on 2026-09-28
+
+Against the Claude Code 2.1.283 changelog and docs. Hooks now use exec form (`command` plus `args`, Claude Code
+2.1.139+), which the hooks docs prefer for any hook that names a path placeholder: no shell starts and the plugin
+path needs no quoting. A nested session on 2.1.283 ran all three hooks in that form: PreToolUse denied the model's
+`supervisectl override`, SubagentStart recorded only the reviewer, and `review record` accepted its review. A Bash
+call that outlasts its timeout is moved to the background and keeps running (Claude Code 2.0.19+), so the skill
+waits for a long `verify` instead of expecting it to be stopped. `/doctor prompt-audit` (2.1.283) found nothing to
+change in the skill or the agents.
