@@ -179,6 +179,30 @@ class Project:
         Ignored files and `.supervise/` are not part of it. Starting from a copy of the real index keeps
         git's stat cache, so only changed files are hashed.
         """
+        sparse = subprocess.run(
+            ["git", "config", "--bool", "--get", "core.sparseCheckout"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+        )
+        if sparse.returncode not in (0, 1):
+            raise SuperviseError(f"cannot read sparse-checkout config: {sparse.stderr.strip()}")
+        if sparse.stdout.strip() == "true":
+            raise Refused(
+                "sparse checkout is not supported",
+                "Files outside the sparse checkout are absent, so this is not a complete working tree.",
+                "use a full checkout (`git sparse-checkout disable`), then retry",
+            )
+        # These flags survive an index copy and make `git add -A` overlook real content changes.
+        entries = git(self.root, "ls-files", "-v", "-z").split("\0")
+        hidden = [entry[2:] for entry in entries if entry and (entry[0].islower() or entry[0] == "S")]
+        if hidden:
+            raise Refused(
+                "git index flags hide tracked files from verification",
+                f"assume-unchanged or skip-worktree: {', '.join(hidden[:10])}",
+                "clear the relevant flags with `git update-index --no-assume-unchanged -- <files>` and/or "
+                "`git update-index --no-skip-worktree -- <files>`, then retry",
+            )
         index = Path(git(self.root, "rev-parse", "--git-path", "index").strip())
         if not index.is_absolute():
             index = self.root / index
