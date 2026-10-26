@@ -67,6 +67,7 @@ def test_index_flags_cannot_hide_an_edit_after_review(project: Project, flag: st
     project.configure(TEST_GATE)
     project.start()
     project.write("app.txt", "ok v2\n")
+    project.git("add", "app.txt")  # The index holds the reviewed content, so the flag hides the later edit.
     project.ok("verify")
     project.review_clean()
 
