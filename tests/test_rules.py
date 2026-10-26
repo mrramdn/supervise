@@ -59,6 +59,68 @@ def test_edit_after_review_refuses_accept(project: Project) -> None:
     assert not project.has_run()
 
 
+@pytest.mark.parametrize(
+    ("flag", "clear_flag"),
+    [("--assume-unchanged", "--no-assume-unchanged"), ("--skip-worktree", "--no-skip-worktree")],
+)
+def test_index_flags_cannot_hide_an_edit_after_review(project: Project, flag: str, clear_flag: str) -> None:
+    project.configure(TEST_GATE)
+    project.start()
+    project.write("app.txt", "ok v2\n")
+    project.git("add", "app.txt")  # The index holds the reviewed content, so the flag hides the later edit.
+    project.ok("verify")
+    project.review_clean()
+
+    project.git("update-index", flag, "app.txt")
+    project.write("app.txt", "bad, edited after review\n")
+    index = project.root / ".git" / "index"
+    before = index.read_bytes()
+    result = project.refused("accept")
+    assert "git index flags" in result.stderr
+    assert "app.txt" in result.stderr
+    assert index.read_bytes() == before
+
+    project.git("update-index", clear_flag, "--", "app.txt")
+    assert project.run("verify").returncode == 1  # The gate now sees the content that the flag hid.
+
+
+def test_sparse_checkout_is_refused_without_changing_the_index(project: Project) -> None:
+    for folder in ("inside", "outside"):
+        (project.root / folder).mkdir()
+        project.write(f"{folder}/file.txt", "tracked\n")
+    project.git("add", "-A")
+    project.git("commit", "-qm", "chore: sparse fixture")
+    project.configure(TEST_GATE)
+    project.start()
+    project.ok("verify")
+    project.review_clean()
+
+    project.git("sparse-checkout", "init", "--cone")
+    project.git("sparse-checkout", "set", "inside")
+    omitted = project.root / "outside" / "file.txt"
+    assert not omitted.exists()
+    index = project.root / ".git" / "index"
+    before = index.read_bytes()
+    result = project.refused("accept")
+    assert "sparse checkout is not supported" in result.stderr
+    assert "git sparse-checkout disable" in result.stderr
+    assert index.read_bytes() == before
+    assert not omitted.exists()
+
+
+@pytest.mark.parametrize("value", ["true", "4", '"bad"', '{name = "test"}'])
+def test_non_array_gates_are_refused_without_starting_a_run(project: Project, value: str) -> None:
+    project.ok("init")
+    config = project.root / ".supervise" / "config.toml"
+    config.write_text(f"gates = {value}\n", encoding="utf-8")
+    before = config.read_bytes()
+    result = project.refused("start", "invalid config")
+    assert "gates must be an array of tables" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not project.has_run()
+    assert config.read_bytes() == before
+
+
 def test_commands_in_the_wrong_phase_exit_2_and_leave_state_alone(project: Project) -> None:
     project.configure(TEST_GATE)
     project.ok("start", "task")

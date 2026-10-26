@@ -44,8 +44,11 @@ def load_config(path: Path) -> dict[str, Any]:
     block_on = data.get("block_on_severity", DEFAULT_BLOCK_ON)
     if block_on not in SEVERITIES:
         raise bad(f"block_on_severity must be one of {', '.join(SEVERITIES)}")
+    raw_gates = data.get("gates", [])
+    if not isinstance(raw_gates, list):
+        raise bad("gates must be an array of tables ([[gates]])")
     gates: list[Gate] = []
-    for i, raw in enumerate(data.get("gates", [])):
+    for i, raw in enumerate(raw_gates):
         if not isinstance(raw, dict):
             raise bad(f"gates[{i}] must be a table ([[gates]])")
         name, command = raw.get("name"), raw.get("command")

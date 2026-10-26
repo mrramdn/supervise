@@ -1,13 +1,12 @@
 # supervise
 
 A Claude Code plugin for plan, implement, verify, and review runs where the rules are checked by code, not by the
-prompt. A small bundled CLI, `supervisectl`, keeps the run state on disk and accepts the work only when the
-project's own gates pass and an independent read-only review is clean, both for the exact working tree being
-accepted.
+prompt. A small bundled CLI, `supervisectl`, keeps the run state on disk and accepts the work only when
+verification and a review without blocking findings both match the exact working tree being accepted.
 
 ## Why
 
-supervise started as a markdown skill I used to run plan → implement → review → verify loops in Claude Code. Across five real runs, the rules written in that skill broke in ways a prompt can't prevent: work was accepted after a one-line edit, made after the review had passed, broke the parser; a review verdict was never saved; missing reviewer agents were silently swapped for a generic one; and a project with no tests at all was reported as passing. So the rules moved out of the prompt into a small CLI that Claude has to go through. It keeps the run state on disk and refuses to accept work unless the project's gates pass and an independent review is clean for the exact final tree.
+supervise started as a markdown skill I used to run plan → implement → review → verify loops in Claude Code. Across five real runs, the rules written in that skill broke in ways a prompt can't prevent: work was accepted after a one-line edit, made after the review had passed, broke the parser; a review verdict was never saved; missing reviewer agents were silently swapped for a generic one; and a project with no tests at all was reported as passing. So the rules moved out of the prompt into a small CLI that Claude has to go through. It keeps the run state on disk and refuses to accept work unless verification and a review without blocking findings match the exact final tree.
 
 ## What it solves
 
@@ -15,7 +14,7 @@ supervise started as a markdown skill I used to run plan → implement → revie
 |---|---|
 | Work accepted without verification, or edited after the review passed | `accept` needs a passing verify and a clean review whose working-tree fingerprints both equal the current tree. Any edit after review means verify and review again. |
 | Run state written by hand by the model, then wrong or lost | State lives in `.supervise/runs/<id>/state.json`, written only by the CLI. A run can be paused and resumed from another session. |
-| A missing reviewer agent silently replaced by a generic one | A review counts only if a `supervise:code-reviewer` subagent started and finished after `review begin`, as recorded by hooks. Its findings are read from its own reply, not passed on by the orchestrator. |
+| A missing reviewer agent silently replaced by a generic one | A review counts as independent only if a `supervise:code-reviewer` subagent started and finished after `review begin`, as recorded by hooks. Its findings are read from its own reply, not passed on by the orchestrator. |
 | A project without tests reported as passing | Without a gate of kind `test`, `status`, `verify`, `accept`, and `report` say NO TESTS. |
 | Fix loops with no end | Each fix after a failed verify or blocking review uses a round; at the cap the run escalates, and only the user can raise it. |
 
@@ -138,6 +137,13 @@ supervise is a thin layer of state, rules, and evidence around one task at a tim
 ## Limitations
 
 - Linux and macOS only. Needs git and Python 3.11+. Gates run through `/bin/sh` with your environment.
+- Sparse checkouts and tracked files marked `assume-unchanged` or `skip-worktree` are refused because git can
+  omit their changes from the fingerprint. The CLI leaves your checkout and index unchanged.
+- Verification passes when configured gates pass or fail identically to the baseline. A run without a test gate
+  can still be accepted, but it carries the NO TESTS label.
+- A clean review means no blocking findings. A diff of at most 10 lines, with no binary changes, may use
+  self-review; the limit is measured from the last independent review, or from the run's start if there is none.
+  The report identifies self-reviews and includes non-blocking findings.
 - Gate output is stored as is under `.supervise/`. Secrets that a gate prints are not redacted.
 - The CLI guards against drift, not against a hostile agent: nothing stops a process from editing `.supervise/`
   by hand.

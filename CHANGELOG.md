@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-10-26
+
+### Fixed
+
+- Fingerprints refuse sparse checkouts and tracked files marked `assume-unchanged` or `skip-worktree`. Those
+  index flags could hide an edit after verification and review, allowing `accept` to approve different content.
+  The checkout and real index are left unchanged.
+- A `gates` value that is not an array of tables is refused with exit 2 instead of raising a traceback before
+  `start`. Missing gates and an empty array still produce the NO TESTS label.
+
 ## [1.0.2] - 2026-09-28
 
 ### Changed
@@ -88,6 +98,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.3]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.2...supervise--v1.0.3
 [1.0.2]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.1...supervise--v1.0.2
 [1.0.1]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.0...supervise--v1.0.1
 [1.0.0]: https://github.com/mrramdn/supervise/compare/supervise--v0.1.0...supervise--v1.0.0
