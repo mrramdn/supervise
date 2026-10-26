@@ -137,9 +137,8 @@ supervise is a thin layer of state, rules, and evidence around one task at a tim
 ## Limitations
 
 - Linux and macOS only. Needs git and Python 3.11+. Gates run through `/bin/sh` with your environment.
-- **Unreleased checkout safeguards:** sparse checkouts and tracked files marked `assume-unchanged` or
-  `skip-worktree` are refused because git can omit their changes from the fingerprint. The CLI leaves your
-  checkout and index unchanged.
+- Sparse checkouts and tracked files marked `assume-unchanged` or `skip-worktree` are refused because git can
+  omit their changes from the fingerprint. The CLI leaves your checkout and index unchanged.
 - Verification passes when configured gates pass or fail identically to the baseline. A run without a test gate
   can still be accepted, but it carries the NO TESTS label.
 - A clean review means no blocking findings. A diff of at most 10 lines, with no binary changes, may use

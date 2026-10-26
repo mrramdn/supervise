@@ -40,9 +40,9 @@ repository root, which `init` adds to `.git/info/exclude`.
 
 - **Fingerprint.** The fingerprint is the git tree id of the working tree as `git add -A` would stage it, built in
   a temporary index (ignored files and `.supervise/` excluded; committing does not change it). `verify` and
-  `review begin` record it; `accept` requires both to equal the current one. The unreleased checkout guard refuses
-  sparse checkouts and tracked files marked `assume-unchanged` or `skip-worktree` without changing the real
-  index. Use a full checkout and clear those flags before retrying.
+  `review begin` record it; `accept` requires both to equal the current one. Sparse checkouts and tracked files
+  marked `assume-unchanged` or `skip-worktree` are refused without changing the real index. Use a full checkout
+  and clear those flags before retrying.
 - **Baseline.** A gate that fails at `start` counts as "same as baseline" at `verify` only when its exit code and
   its output, with durations, timestamps, and addresses removed, are identical. A gate that changes the working
   tree fails the verify.
