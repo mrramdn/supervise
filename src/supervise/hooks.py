@@ -22,6 +22,15 @@ OVERRIDE_REASON = (
     'they can type `! supervisectl override --max-fix-rounds N --reason "..."` themselves. '
     "Afterwards, run `supervisectl status` before continuing."
 )
+ABORT_REASON = (
+    "`supervisectl abort` is reserved for the user: a new run after an abort starts with fresh fix rounds and takes "
+    "the changes left in the working tree as its baseline, so no review would see them. Keep working in this run, "
+    "or stop and ask the user; if they drop the task, they can type "
+    '`! supervisectl abort --reason "..."` themselves. Afterwards, run `supervisectl status` before continuing.'
+)
+# `abort` as the subcommand, after any options. Tasks, plans, and findings passed to supervisectl often contain
+# the word itself, so a bare mention (as for override) would deny ordinary calls.
+_ABORT = re.compile(r"\bsupervisectl(?:\s+-\S*)*\s+abort\b")
 
 
 def _state_dir(start: str) -> Path | None:
@@ -51,15 +60,21 @@ def mentions_override(command: str) -> bool:
     return "supervisectl" in flat and re.search(r"\boverride\b", flat) is not None
 
 
+def runs_abort(command: str) -> bool:
+    return _ABORT.search(re.sub(r"[\"'\\]", "", command)) is not None
+
+
 def pre_tool_use(data: dict[str, Any]) -> None:
+    """Deny the user-only commands, `override` and `abort`, to the model. The user's own `!` commands skip hooks."""
     if data.get("tool_name") != "Bash":
         return
     command = str((data.get("tool_input") or {}).get("command", ""))
-    if mentions_override(command):
+    reason = OVERRIDE_REASON if mentions_override(command) else ABORT_REASON if runs_abort(command) else None
+    if reason:
         decision = {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": OVERRIDE_REASON,
+            "permissionDecisionReason": reason,
         }
         print(json.dumps({"hookSpecificOutput": decision}))
 

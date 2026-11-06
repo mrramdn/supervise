@@ -18,7 +18,7 @@ step, and nothing was changed, so follow its output rather than working around i
 
 1. Run `supervisectl status`.
    - An open run: continue from the phase it shows (`supervisectl resume` if it is paused). If the user now asks
-     for a different task, ask whether to finish or abort the open run first.
+     for a different task, ask whether to finish the open run first or drop it, which only they can do (below).
    - Not initialized: run `supervisectl init` and show the user the gates it detected. The gates decide what
      "verified" means, so let the user correct `.supervise/config.toml` before starting.
 2. `supervisectl start "<task>"` runs the gates once to record the baseline: what already fails before you touch
@@ -101,7 +101,9 @@ changed since accept or the message is not a Conventional Commit. Add no AI attr
   typing `! supervisectl override --max-fix-rounds <N> --reason "<why>"` in the prompt; a hook refuses `override`
   from you. After they do, run `supervisectl status` before continuing.
 - Before ending a session mid-run, `supervisectl pause`. Any later session continues with `supervisectl resume`.
-- `supervisectl abort --reason "<why>"` only when the user drops the task.
+- Only the user can drop a run, by typing `! supervisectl abort --reason "<why>"`; a hook refuses `abort` from you.
+  A new run after an abort would start with fresh fix rounds and take the dropped run's changes as its baseline,
+  where no review sees them.
 
 ## Finishing
 

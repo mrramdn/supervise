@@ -96,7 +96,8 @@ def next_step(state: State) -> str:
     if status == "escalated":
         return (
             "stop and tell the user; only they can continue, by typing "
-            '`! supervisectl override --max-fix-rounds N --reason "..."` (or ask whether to abort the run)'
+            '`! supervisectl override --max-fix-rounds N --reason "..."`, or drop the run with '
+            '`! supervisectl abort --reason "..."`'
         )
     if status in ("accepted", "aborted"):
         return '`supervisectl start "<task>"` for new work'
@@ -357,7 +358,8 @@ def cmd_start(args: argparse.Namespace) -> int:
                 raise Refused(
                     f"run {open_id} is still open ({other['status']}, phase {other['phase']})",
                     f"Task: {other['task']}",
-                    'finish it (`supervisectl status`), or `supervisectl abort --reason "..."` if the user drops it',
+                    "finish it (`supervisectl status`), or ask the user whether to drop it; they type `! supervisectl"
+                    ' abort --reason "..."`',
                 )
         # Ids sort in start order (latest_run_id relies on it), also for two runs in the same second.
         ns = time.time_ns()
@@ -831,7 +833,8 @@ def cmd_fix(_args: argparse.Namespace) -> int:
                 *(f"  still open: {item}" for item in items),
                 "Stop here and tell the user what is still failing. Only the user can continue the run, by typing:",
                 '  ! supervisectl override --max-fix-rounds <N> --reason "<why>"',
-                'or they can drop it with `supervisectl abort --reason "..."`.',
+                "or drop it, by typing:",
+                '  ! supervisectl abort --reason "<why>"',
             ]
             print("\n".join(lines))
             return 1
@@ -991,14 +994,22 @@ def cmd_resume(_args: argparse.Namespace) -> int:
 
 
 def cmd_abort(args: argparse.Namespace) -> int:
+    """For the user only: the PreToolUse hook denies it to the model, since a new run would reset the fix rounds."""
     project = Project.find()
     with project.lock("abort"):
         state = open_run(project, active=False)
+        left = project.changed_files(state["start"]["tree"], project.fingerprint())
         state["status"] = "aborted"
         record(state, "abort", (args.reason or "").strip())
         project.save(state)
         project.set_current(None)
-    print(f"Run {state['run_id']} aborted in phase {state['phase']}. The working tree was left as it is.")
+    lines = [f"Run {state['run_id']} aborted in phase {state['phase']}. The working tree was left as it is."]
+    if left:
+        lines.append(
+            f"Changed since the run started: {short_list(left)}. A new run takes them as its baseline, so they would"
+            " not be reviewed."
+        )
+    print("\n".join(lines))
     return 0
 
 
@@ -1178,7 +1189,7 @@ def build_parser() -> argparse.ArgumentParser:
     add(sub, "report", cmd_report, "print the run report (markdown)").add_argument("--run", help="run id")
     add(sub, "pause", cmd_pause, "pause the run").add_argument("--reason")
     add(sub, "resume", cmd_resume, "resume a paused run")
-    add(sub, "abort", cmd_abort, "drop the run").add_argument("--reason")
+    add(sub, "abort", cmd_abort, "drop the run (for the user only)").add_argument("--reason")
     p = add(sub, "override", cmd_override, "raise the fix round cap (for the user only)")
     p.add_argument("--max-fix-rounds", type=int, required=True)
     p.add_argument("--reason", required=True)

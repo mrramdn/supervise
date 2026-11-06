@@ -17,7 +17,7 @@ supervise started as a markdown skill I used to run plan → implement → revie
 | Run state written by hand by the model, then wrong or lost | State lives in `.supervise/runs/<id>/state.json`, written only by the CLI. A run can be paused and resumed from another session. |
 | A missing reviewer agent silently replaced by a generic one | A review counts only if a `supervise:code-reviewer` subagent started and finished after `review begin`, as recorded by hooks. Its findings are read from its own reply, not passed on by the orchestrator. |
 | A project without tests reported as passing | Without a gate of kind `test`, `status`, `verify`, `accept`, and `report` say NO TESTS. |
-| Fix loops with no end | Each fix after a failed verify or blocking review uses a round; at the cap the run escalates, and only the user can raise it. |
+| Fix loops with no end | Each fix after a failed verify or blocking review uses a round; at the cap the run escalates, and only the user can raise the cap or drop the run. |
 
 Each row is covered by an end-to-end test in `tests/` that drives the real CLI in a temporary git repository.
 
@@ -66,7 +66,7 @@ There are two sides:
   how to run the loop: plan, implement, verify, review, then accept or fix.
 - **The CLI, `supervisectl`, is for Claude.** Claude runs it through Bash at every phase change. It owns the state
   and refuses a step that breaks a rule (exit 2, state unchanged, with the rule and the next step in the message).
-  You only use it yourself for human decisions, such as `override`.
+  You only use it yourself for human decisions: `override` and `abort`.
 
 ```
 init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
@@ -86,7 +86,7 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 - `commit`, if you ask for it, commits exactly the accepted tree with a Conventional Commits message.
 
 The plugin also ships `supervise:implementer` for large, independent subtasks, and a PreToolUse hook that denies
-`supervisectl override` to the model. `override` is typed by you with `!` in the prompt.
+`supervisectl override` and `supervisectl abort` to the model. You type those with `!` in the prompt.
 
 Design notes and the reasons behind each rule are in [DESIGN.md](DESIGN.md); the full CLI reference is
 [skills/supervise/references/cli.md](skills/supervise/references/cli.md).
@@ -117,7 +117,8 @@ CLI (exit codes: 0 done, 1 negative result, 2 refused, 3 error):
 | `accept` | Accepts the run when verify and a clean review match the current tree. |
 | `commit -m MSG` | Commits exactly the accepted tree, only when you ask. |
 | `report [--run ID]` | Prints a markdown report of a run. |
-| `pause` / `resume` / `abort` | Pauses, resumes, or drops the open run. |
+| `pause` / `resume` | Pauses or resumes the open run. |
+| `abort [--reason T]` | Yours only: drops the open run and lists the changes it leaves in the working tree. |
 | `override --max-fix-rounds N --reason T` | Yours only: raises the fix cap and reopens an escalated run. |
 
 ## When to use something else

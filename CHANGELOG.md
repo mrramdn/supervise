@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-11-07
+
+### Fixed
+
+- A stuck run could start over with fresh fix rounds: `supervisectl abort` followed by `start` reset the fix-round
+  cap, and the new run took the aborted run's changes as its baseline, so `accept` and `commit` could carry
+  changes no review saw. The PreToolUse hook now denies `abort` to the model, as it does `override`; you drop a
+  run by typing `! supervisectl abort --reason "..."`. The escalation and open-run messages say so, and `abort`
+  lists the files changed since the run started.
+
 ## [1.0.2] - 2026-09-28
 
 ### Changed
@@ -88,6 +98,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.3]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.2...supervise--v1.0.3
 [1.0.2]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.1...supervise--v1.0.2
 [1.0.1]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.0...supervise--v1.0.1
 [1.0.0]: https://github.com/mrramdn/supervise/compare/supervise--v0.1.0...supervise--v1.0.0
