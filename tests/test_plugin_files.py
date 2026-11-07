@@ -27,7 +27,8 @@ def test_skill_file() -> None:
     fields, body = frontmatter(SKILL)
     assert fields["name"] == SKILL.parent.name == "supervise"
     assert len(fields["description"]) <= 1024
-    assert fields["disable-model-invocation"] == "false"
+    assert "disable-model-invocation" not in fields  # its default, false, lets Claude load the skill on its own
+    assert len(fields["compatibility"]) <= 500
     assert len(SKILL.read_text(encoding="utf-8").splitlines()) < 150
     assert not re.search(r"\b(MUST|NEVER|CRITICAL)\b", body)
     assert not re.search(r"(/home/|/Users/|~/)", SKILL.read_text(encoding="utf-8"))
