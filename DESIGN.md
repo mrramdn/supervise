@@ -91,7 +91,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 - **S3, S5.** Agents are addressed as `supervise:*`. Review evidence is SubagentStop `agent_type` (canonical, no
   `plugin:` prefix). A user `!` command bypasses PreToolUse, so the hook blocks `override` for the model only, and
   there is no TTY check. 1.0.3 denies `abort` the same way.
-- **S4.** Agents set `model: inherit` and no `effort`.
+- **S4.** Agents set `model: inherit` and no `effort`. The Agent tool has since gained an `effort` parameter, so
+  since 1.0.5 the skill lets the orchestrator pass `model` and `effort` per call when the user's instructions ask for
+  a choice, with one limit: the reviewer never gets a weaker model than the one that wrote the change. Without such
+  instructions both agents still run on the session's model and effort.
 - **S8.** The PreToolUse hook uses matcher `Bash` plus `if: "Bash(*supervisectl*)"`, so unrelated Bash calls start
   no process. It denies `override` and `abort` whether or not a run is open. The SubagentStop hook has no prefilter:
   it walks up from the session's cwd to the repository root (sessions opened in a subdirectory), subagent stops are

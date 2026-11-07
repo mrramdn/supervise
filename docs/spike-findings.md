@@ -48,6 +48,8 @@ scratchpad and is not committed, so the evidence below quotes the decisive lines
   effort parameter. `model: inherit` differs from omitting the field only when `CLAUDE_CODE_SUBAGENT_MODEL` is set.
 - **Impact:** write `model: inherit` explicitly and omit `effort`. A profile must never pass `inherit` or a full
   model ID per invocation (omit the parameter instead), and cannot set per-agent effort.
+- **Update 2026-11-08:** the Agent tool now has an `effort` parameter (low to max), so the orchestrator can set
+  effort per call. See DESIGN.md, S4.
 
 ## S5: hook inputs and human-only commands (confirmed)
 - **Answer:** PreToolUse sees `tool_name: "Agent"` with `tool_input.subagent_type`; SubagentStart/Stop carry

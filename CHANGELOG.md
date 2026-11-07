@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `supervisectl subtask done 1` means `s1`; models tend to write the number.
 - The skill says to check that the plugin's agents loaded by reading the Agent tool's list, not by calling an
   agent, and that `review record` waits for the reviewer's hook itself, so it needs no `sleep` first.
+- The skill says how to pick `model` and `effort` for the agents when the user's instructions ask for a choice: an
+  implementer's fit its subtask, and the reviewer never gets a weaker model than the one that wrote the change.
+  Without such instructions both agents still run on the session's model and effort, as before.
 
 ## [1.0.4] - 2026-11-07
 
