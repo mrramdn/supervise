@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [1.0.4] - 2026-11-07
 
+### Added
+
+- A plugin icon, `.claude-plugin/icon.png` (1024 px), for the plugin directory. Its SVG source is
+  `.github/brand/icon.svg`.
+
 ### Fixed
 
 - Ordinary `supervisectl` calls were denied when their text contained the word "override", such as
