@@ -19,13 +19,13 @@ repository root, which `init` adds to `.git/info/exclude`.
 | `init` | any time | Detects gates from `Makefile`, `package.json` (runner from its `packageManager` field, else the lockfile), `pyproject.toml`; writes `.supervise/config.toml` if missing. |
 | `start "<task>"` | no open run | Runs the gates as the baseline and opens a run in phase PLAN. |
 | `status` | any time | Shows the open run, whether the tree changed since verify or review, and the next step. |
-| `plan set <file\|->` | PLAN | Records the plan; moves to IMPLEMENT. |
+| `plan set <file\|->` | PLAN | Records the plan; moves to IMPLEMENT. A JSON file directly in `.supervise/`, such as `.supervise/plan.json`, is removed once recorded. |
 | `subtask add "<title>" [--acceptance T] [--origin plan\|user]` | IMPLEMENT, FIX; VERIFY and REVIEW only with `--origin user`, and not after a failed verify or a blocking review (`fix` first) | Adds a subtask. From VERIFY or REVIEW it returns to IMPLEMENT without a fix round. |
-| `subtask done <id> [--note T]` | after PLAN | Marks a subtask done. |
+| `subtask done <id> [--note T]` | after PLAN | Marks a subtask done; `1` means `s1`. |
 | `verify` | IMPLEMENT, FIX, VERIFY, REVIEW | Runs the gates; moves to VERIFY. Refused after a failed verify if files changed since (run `fix` first), and after a blocking review. |
 | `review begin` | VERIFY with a passing verify of the current tree | Writes `runs/<id>/review-<n>.diff` and prints the reviewer brief; moves to REVIEW. |
 | `review record [--wait S]` | REVIEW, after `review begin`, tree unchanged | Reads the findings of every `supervise:code-reviewer` that started and finished since `review begin`, waiting up to S seconds (default 15) for its stop event. |
-| `review record --findings <file\|->` | as above, when a reviewer reply has no findings JSON | Records the orchestrator's transcription of that reply as an independent review marked transcribed; saves the reply as `review-N-reply.md`. |
+| `review record --findings <file\|->` | as above, when a reviewer reply has no findings JSON | Records the orchestrator's transcription of that reply as an independent review marked transcribed; saves the reply as `review-N-reply.md`. A JSON file directly in `.supervise/` is removed once recorded. |
 | `review record --self --reason T [--findings <file\|->]` | as above, diff of at most 10 lines and no binary files since the last independent review | Records the orchestrator's own review. |
 | `fix` | VERIFY, REVIEW | Starts a fix round and lists what to repair. When all rounds are used, the run becomes escalated instead (exit 1). After a clean review it lists the non-blocking findings and uses no fix round. |
 | `accept` | REVIEW with a clean review | Accepts when the last verify passed and verify, review, and the current tree have the same fingerprint. |
@@ -67,6 +67,8 @@ repository root, which `init` adds to `.git/info/exclude`.
   config.toml            project config (copied into each run at start)
   current                id of the open run
   lock                   write lock
+  plan.json              plan input for `plan set`, removed once recorded
+  findings.json          findings input for `review record --findings`, removed once recorded
   runs/<id>/state.json   run state and history
   runs/<id>/events.jsonl subagent starts and stops recorded by the hooks
   runs/<id>/logs/        full gate output per baseline and verify

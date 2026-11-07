@@ -71,6 +71,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   `bypassPermissions` skips such prompts, while a deny holds in every mode. The hook matches `abort`, and since
   1.0.4 `override`, only as the subcommand, because tasks, plans, and findings often contain the words. `abort`
   lists the files changed since the run started, so the user sees what a new run would take as its baseline.
+- **JSON goes in through files in `.supervise/`.** Since 1.0.5 the skill writes plans and findings to
+  `.supervise/plan.json` and `.supervise/findings.json` instead of piping a heredoc: Claude Code asks for permission
+  on a Bash command with a brace next to a quote, whatever the allow rules say (found in a smoke test on
+  2026-11-08). The fingerprint and the diff leave `.supervise/` out, and the CLI removes the file once recorded.
 - **Config is copied at `start`**, so editing `config.toml` mid-run cannot change the gates of that run.
 - **Trust points.** `subtask add --origin user` is the model's claim that the user asked for more; the report
   labels such subtasks. The CLI does not stop a process from editing `.supervise/` by hand. It guards against drift,

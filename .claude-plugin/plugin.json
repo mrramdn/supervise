@@ -1,6 +1,6 @@
 {
   "name": "supervise",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Checkpointed plan, implement, verify, and independent review workflow for Claude Code. A bundled CLI keeps the run state in the project and accepts work only when the project's gates pass and a read-only review is clean for the exact final working tree.",
   "author": {
     "name": "mrramdn"

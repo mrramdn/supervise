@@ -27,6 +27,10 @@ REVIEW_WAIT_SECONDS = 15.0
 OPEN = ("active", "paused", "escalated")
 NO_TESTS = 'NO TESTS: no gate of kind "test" is configured, so passing gates do not show that the change works.'
 PLAN_HINT = 'pass {"summary": "...", "subtasks": [{"title": "...", "acceptance": "..."}]}'
+# Where the model writes JSON for the CLI. A heredoc that holds JSON makes Claude Code ask for permission on every call,
+# and `.supervise/` stays out of the fingerprint and the reviewed diff.
+PLAN_FILE = ".supervise/plan.json"
+FINDINGS_FILE = ".supervise/findings.json"
 SEVERITY_ALIASES = {
     "blocker": "critical",
     "error": "high",
@@ -103,7 +107,7 @@ def next_step(state: State) -> str:
         return '`supervisectl start "<task>"` for new work'
     verify, review = last(state["verifies"]), last(state["reviews"])
     if phase == "PLAN":
-        return "write the plan, then `supervisectl plan set -` with the plan JSON on stdin"
+        return f"write the plan JSON to `{PLAN_FILE}`, then `supervisectl plan set {PLAN_FILE}`"
     if phase in ("IMPLEMENT", "FIX"):
         return "finish the changes, then `supervisectl verify`"
     if phase == "VERIFY":
@@ -180,6 +184,18 @@ def read_json_input(source: str, what: str, hint: str) -> Any:
         return json.loads(text)
     except ValueError as exc:
         raise Refused(f"the {what} is not valid JSON", str(exc), hint) from None
+
+
+def consume_input(project: Project, source: str | None) -> str:
+    """Remove a JSON input file directly in `.supervise/` once the command has recorded it, so the next run writes a
+    fresh one (Claude Code's Write tool won't overwrite a file the session hasn't read). Returns a note, or ''."""
+    if not source or source == "-":
+        return ""
+    path = Path(source).resolve()
+    if path.suffix != ".json" or path.parent != project.dir.resolve() or not path.is_file():
+        return ""
+    path.unlink()
+    return f"Read and removed {path.relative_to(project.root.resolve())}."
 
 
 def new_subtask(sid: str, title: str, acceptance: str, origin: str) -> dict[str, Any]:
@@ -456,7 +472,8 @@ def cmd_plan_set(args: argparse.Namespace) -> int:
         record(state, "plan", f"{len(subtasks)} subtasks")
         project.save(state)
     lines = [f"Plan recorded: {len(subtasks)} subtask(s).", *(f"  {s['id']} {s['title']}" for s in subtasks)]
-    print("\n".join([*lines, f"next: {next_step(state)}"]))
+    removed = consume_input(project, args.file)
+    print("\n".join([*lines, *([removed] if removed else []), f"next: {next_step(state)}"]))
     return 0
 
 
@@ -500,7 +517,8 @@ def cmd_subtask_done(args: argparse.Namespace) -> int:
     with project.lock("subtask done"):
         state = open_run(project)
         require_phase(state, "subtask done", "IMPLEMENT", "FIX", "VERIFY", "REVIEW")
-        subtask = next((s for s in state["subtasks"] if s["id"] == args.id), None)
+        sid = f"s{args.id}" if args.id.isdigit() else args.id  # `1` means s1
+        subtask = next((s for s in state["subtasks"] if s["id"] == sid), None)
         if subtask is None:
             known = ", ".join(s["id"] for s in state["subtasks"]) or "none"
             raise Refused(f"there is no subtask {args.id}", f"Known subtasks: {known}.", "`supervisectl status`")
@@ -745,9 +763,10 @@ def cmd_review_record(args: argparse.Namespace) -> int:
                     f"the {REVIEWER} reply has no findings JSON",
                     f"Agent {', '.join(str(e.get('agent_id')) for e in without_json)} ended without a"
                     ' {"findings": [...]} block, so its findings would be lost.',
-                    "copy every finding from the reviewer's reply, as written, into `supervisectl review record"
-                    ' --findings -` with {"findings": [...]} on stdin (recorded as transcribed, with the reply saved'
-                    " for the report), or `supervisectl review begin` again and re-run the reviewer",
+                    "copy every finding from the reviewer's reply, as written, into"
+                    f' `{FINDINGS_FILE}` as {{"findings": [...]}} and run `supervisectl review record --findings'
+                    f" {FINDINGS_FILE}` (recorded as transcribed, with the reply saved for the report), or"
+                    " `supervisectl review begin` again and re-run the reviewer",
                 )
             if given is not None and not without_json:
                 raise Refused(
@@ -780,6 +799,9 @@ def cmd_review_record(args: argparse.Namespace) -> int:
         record(state, "review record", review_line(review))
         project.save(state)
     lines = [review_line(review)]
+    removed = consume_input(project, args.findings)
+    if removed:
+        lines.append(f"  {removed}")
     if review["reply"]:
         lines.append(f"  The reviewer's reply is saved at {review['reply']}; the report points to it.")
     lines += [f"  BLOCKING {finding_line(f)}" for f in blocking]
@@ -1160,7 +1182,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("title")
     p.add_argument("--acceptance")
     p.add_argument("--origin", choices=("plan", "user"), default="plan")
-    p = add(subtask, "done", cmd_subtask_done, "mark a subtask done")
+    p = add(subtask, "done", cmd_subtask_done, "mark a subtask done (s1, or just 1)")
     p.add_argument("id")
     p.add_argument("--note")
     add(sub, "verify", cmd_verify, "run the gates and compare failures with the baseline")
@@ -1173,7 +1195,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", help="why a self-review is enough (required with --self)")
     p.add_argument(
         "--findings",
-        help="findings JSON file, or - for stdin: a self-review's, or a transcription of a reply without JSON",
+        help="findings JSON file (one in .supervise/ is removed once recorded), or - for stdin: a self-review's,"
+        " or a transcription of a reply without JSON",
     )
     p.add_argument(
         "--wait",

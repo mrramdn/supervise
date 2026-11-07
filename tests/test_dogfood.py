@@ -28,11 +28,15 @@ def test_reviewer_reply_without_json_is_transcribed_instead_of_lost(project: Pro
     project.subagent_stop(REVIEWER, prose)
     refused = project.refused("review", "record")
     assert "no findings JSON" in refused.stderr
-    assert "review record --findings -" in refused.stderr
+    assert "review record --findings .supervise/findings.json" in refused.stderr
 
+    # The transcription goes through the file the message names; writing it leaves the tree fingerprint alone.
     transcript = {"findings": [{"file": "app.txt", "line": 1, "severity": "high", "summary": "says v2, not v3"}]}
-    result = project.run("review", "record", "--findings", "-", stdin=json.dumps(transcript))
+    project.write(".supervise/findings.json", json.dumps(transcript))
+    result = project.run("review", "record", "--findings", ".supervise/findings.json")
     assert result.returncode == 1, result.stderr  # the transcribed high finding blocks like any other
+    assert "Read and removed .supervise/findings.json." in result.stdout
+    assert not (project.root / ".supervise" / "findings.json").exists()
     assert "independent, findings transcribed by the orchestrator" in result.stdout
     review = project.state()["reviews"][-1]
     assert (review["reviewer"], review["transcribed"], review["blocking"]) == ("independent", True, 1)
@@ -279,3 +283,44 @@ def test_commit_runs_the_repository_hooks_and_leaves_supervise_files_alone(proje
     assert "differs from the accepted tree (a git hook changed files)" in changed.stderr
     assert project.state(run_id)["commit"]["tree_matches"] is False
     assert "**differs from the accepted tree**" in project.ok("report", "--run", run_id)
+
+
+def test_plan_file_in_the_state_dir_is_read_once_and_leaves_the_tree_alone(project: Project) -> None:
+    # Smoke test, 8 Nov 2026: a heredoc holding JSON made Claude Code ask for permission on every call, so the skill
+    # has the model write the plan to .supervise/plan.json. A plan the CLI can't read stays for the model to fix; a
+    # recorded one is removed, so the next run's Write doesn't hit a file the session never read.
+    project.configure(TEST_GATE)
+    project.ok("start", "change app.txt")
+    plan_file = project.root / ".supervise" / "plan.json"
+    assert "`supervisectl plan set .supervise/plan.json`" in project.ok("status")
+
+    project.write(".supervise/plan.json", '{"subtasks": [')
+    assert "not valid JSON" in project.refused("plan", "set", ".supervise/plan.json").stderr
+    assert plan_file.exists()
+
+    project.write(".supervise/plan.json", json.dumps({"subtasks": [{"title": "edit app.txt"}, {"title": "check"}]}))
+    out = project.ok("plan", "set", ".supervise/plan.json")
+    assert "Read and removed .supervise/plan.json." in out
+    assert not plan_file.exists()
+
+    # A bare number names the subtask, as models tend to write it.
+    assert "Subtask s1 done" in project.ok("subtask", "done", "1")
+    assert "there is no subtask 3" in project.refused("subtask", "done", "3").stderr
+
+    project.write("app.txt", "ok v2\n")
+    project.ok("verify")
+    project.ok("review", "begin")
+    # Written after `review begin`: the record below would be refused if the file counted as a change to the tree.
+    project.write(".supervise/findings.json", '{"findings": []}')
+    out = project.ok("review", "record", "--self", "--reason", "one line", "--findings", ".supervise/findings.json")
+    assert "Read and removed .supervise/findings.json." in out
+    assert "ACCEPTED run" in project.ok("accept")
+
+
+def test_input_files_outside_the_state_dir_are_left_alone(project: Project) -> None:
+    project.configure(TEST_GATE)
+    project.ok("start", "change app.txt")
+    project.write("plan.json", json.dumps(["edit app.txt"]))
+    out = project.ok("plan", "set", "plan.json")
+    assert "removed" not in out
+    assert (project.root / "plan.json").exists()
