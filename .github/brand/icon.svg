@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- supervise: a clockwise loop (plan, implement, verify, review) around a check,
+       the gate that passes work. Same grid, stroke and chevron as rightsize.svg. -->
+  <rect width="1024" height="1024" rx="224" fill="#3B4392"/>
+  <g fill="none" stroke="#F0F3FE" stroke-width="96" stroke-linecap="round" stroke-linejoin="round">
+    <!-- loop: 305 degree arc around (512,528), r=256, from 2 o'clock to 12 o'clock -->
+    <path d="M721.7 381.2A256 256 0 1 1 512 272"/>
+    <!-- arrowhead: a 90 degree chevron with its tip on the end of the arc -->
+    <path d="M416 176L512 272L416 368"/>
+    <!-- check -->
+    <path d="M412 532L476 596L604 468"/>
+  </g>
+</svg>

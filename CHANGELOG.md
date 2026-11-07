@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-11-07
+
+### Added
+
+- A plugin icon, `.claude-plugin/icon.png` (1024 px), for the plugin directory. Its SVG source is
+  `.github/brand/icon.svg`.
+
+### Fixed
+
+- Ordinary `supervisectl` calls were denied when their text contained the word "override", such as
+  `supervisectl start "let users override the theme"` or a plan, finding, or commit message that used it: the
+  PreToolUse hook matched the word anywhere. It now denies `override` only as the subcommand, the way it has
+  matched `abort` since 1.0.3.
+
+### Changed
+
+- The skill's `compatibility` field names Claude Code next to git and Python 3.11+ on Linux or macOS: supervise
+  relies on the plugin's hooks and its `bin/` CLI, so the skill does not work outside Claude Code. The frontmatter
+  drops `disable-model-invocation: false`, which is the default.
+
 ## [1.0.3] - 2026-11-07
 
 ### Fixed
@@ -98,6 +118,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.4]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.3...supervise--v1.0.4
 [1.0.3]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.2...supervise--v1.0.3
 [1.0.2]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.1...supervise--v1.0.2
 [1.0.1]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.0...supervise--v1.0.1

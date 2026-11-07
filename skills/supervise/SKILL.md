@@ -4,8 +4,7 @@ description: Checkpointed coding workflow (plan, implement, verify with the proj
 argument-hint: "<task> | status | resume | report"
 allowed-tools: Bash(supervisectl *)
 license: MIT
-compatibility: Needs git and Python 3.11+ on Linux or macOS.
-disable-model-invocation: false
+compatibility: Needs Claude Code, because it relies on the plugin's hooks and its bin/ CLI. Also needs git and Python 3.11+ on Linux or macOS.
 ---
 
 # supervise

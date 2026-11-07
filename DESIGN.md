@@ -68,9 +68,9 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   and the new run took the aborted run's changes as its baseline, so `accept` and `commit` could carry changes no
   review saw (found in a field test on 2026-11-06). The PreToolUse hook denies `abort` to the model, and the user
   types it with `!`, which skips hooks (S5). A hook `ask` would let the user approve it in the prompt instead, but
-  `bypassPermissions` skips such prompts, while a deny holds in every mode. The hook matches `abort` only as the
-  subcommand, because tasks, plans, and findings often contain the word. `abort` lists the files changed since the
-  run started, so the user sees what a new run would take as its baseline.
+  `bypassPermissions` skips such prompts, while a deny holds in every mode. The hook matches `abort`, and since
+  1.0.4 `override`, only as the subcommand, because tasks, plans, and findings often contain the words. `abort`
+  lists the files changed since the run started, so the user sees what a new run would take as its baseline.
 - **Config is copied at `start`**, so editing `config.toml` mid-run cannot change the gates of that run.
 - **Trust points.** `subtask add --origin user` is the model's claim that the user asked for more; the report
   labels such subtasks. The CLI does not stop a process from editing `.supervise/` by hand. It guards against drift,

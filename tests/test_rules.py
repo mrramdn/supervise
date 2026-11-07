@@ -126,8 +126,23 @@ def test_hook_denies_override_from_the_model(project: Project) -> None:
         "supervisectl override --max-fix-rounds 9 --reason x",
         'cd sub && "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl" override --max-fix-rounds 9 --reason x',
         "supervisectl ov''erride --max-fix-rounds 9 --reason x",
+        "supervisectl status && supervisectl over\\ride --max-fix-rounds 9 --reason x",
+        "supervisectl -- override --max-fix-rounds 9 --reason x",
+        "supervisectl \\\n  override --max-fix-rounds 9 --reason x",
     ]
-    allowed = ["supervisectl status", "supervisectl review record", "ls"]
+    finding = {"file": "app.txt", "line": 1, "severity": "low", "summary": "an env var cannot override the config"}
+    allowed = [  # the word in a task, a subtask, a plan, a finding, a commit message, or a search is not the command
+        "supervisectl status",
+        "supervisectl review record",
+        "ls",
+        'supervisectl start "let users override the theme"',
+        "supervisectl subtask add 'override the default timeout per project' --origin user",
+        'supervisectl plan set - <<\'EOF\'\n{"subtasks": ["override the theme"]}\nEOF',
+        f"supervisectl review record --findings - <<'EOF'\n{json.dumps({'findings': [finding]})}\nEOF",
+        'supervisectl commit -m "feat: let users override the theme"',
+        'supervisectl start "abort the upload or override its limit"',
+        "supervisectl report | grep -c override",
+    ]
     for command in denied + allowed:
         payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}}
         result = project.hook("PreToolUse", payload)
@@ -135,9 +150,11 @@ def test_hook_denies_override_from_the_model(project: Project) -> None:
         if command in allowed:
             assert result.stdout == "", command
             continue
+        assert result.stdout, f"the hook let {command!r} through"
         decision = json.loads(result.stdout)["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny", command
         assert "reserved for the user" in decision["permissionDecisionReason"]
+        assert "! supervisectl override" in decision["permissionDecisionReason"]
 
 
 def test_hook_denies_abort_so_a_stuck_run_cannot_start_over(project: Project) -> None:
