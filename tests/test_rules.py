@@ -140,6 +140,55 @@ def test_hook_denies_override_from_the_model(project: Project) -> None:
         assert "reserved for the user" in decision["permissionDecisionReason"]
 
 
+def test_hook_denies_abort_so_a_stuck_run_cannot_start_over(project: Project) -> None:
+    # Escalated with a change no review saw. Abort plus start would give the work fresh fix rounds and make
+    # other.txt part of the new run's baseline, so a later accept and commit would carry it unreviewed.
+    project.configure(TEST_GATE, max_fix_rounds=1)
+    project.start()
+    project.write("app.txt", "bad\n")
+    project.write("other.txt", "never reviewed\n")
+    assert project.run("verify").returncode == 1
+    project.ok("fix")
+    assert project.run("verify").returncode == 1
+    escalated = project.run("fix")
+    assert escalated.returncode == 1
+
+    denied = [
+        'supervisectl abort --reason "start over"',
+        'supervisectl abort && supervisectl start "change app.txt"',
+        'cd docs && "${CLAUDE_PLUGIN_ROOT}/bin/supervisectl" ab""ort',
+        "supervisectl -- abort",
+    ]
+    allowed = [  # the word in a task, a subtask, a plan, or a search is not the command
+        'supervisectl start "abort the upload when the user cancels"',
+        "supervisectl subtask add 'retry an aborted upload' --origin user",
+        'supervisectl plan set - <<\'EOF\'\n{"subtasks": ["abort on timeout"]}\nEOF',
+        "supervisectl report | grep -c abort",
+    ]
+    for command in denied + allowed:
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": command}}
+        result = project.hook("PreToolUse", payload)
+        assert result.returncode == 0, result.stderr
+        if command in allowed:
+            assert result.stdout == "", command
+            continue
+        assert result.stdout, f"the hook let {command!r} through"
+        decision = json.loads(result.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny", command
+        assert "reserved for the user" in decision["permissionDecisionReason"]
+        assert "! supervisectl abort" in decision["permissionDecisionReason"]
+    assert project.state()["status"] == "escalated"
+    assert "! supervisectl abort" in escalated.stdout
+    assert "! supervisectl abort" in project.ok("status")
+
+    # The user's `! supervisectl abort` skips PreToolUse hooks, so they can still drop the run, and it says what
+    # it leaves behind.
+    aborted = project.ok("abort", "--reason", "dropped by the user")
+    assert "would not be reviewed" in aborted
+    assert "other.txt" in aborted
+    assert not project.has_run()
+
+
 def test_review_record_needs_the_code_reviewer_and_self_review_needs_a_small_diff(project: Project) -> None:
     project.configure(TEST_GATE)
     project.start()

@@ -32,7 +32,7 @@ repository root, which `init` adds to `.git/info/exclude`.
 | `commit -m MSG` | latest run accepted, no open run, tree unchanged since accept | Only when the user asks. Stages and commits exactly the accepted tree with `git commit` (hooks run). Refuses a message that is not a Conventional Commit or carries AI attribution, and a second commit of the run. |
 | `report [--run ID]` | any time | Prints a markdown report of the open run, or the latest run. |
 | `pause [--reason T]` / `resume` | active / paused run | Pauses or resumes the run; any process or session can resume. |
-| `abort [--reason T]` | open run | Drops the run and leaves the working tree as it is. |
+| `abort [--reason T]` | open run | For the user only. Drops the run, leaves the working tree as it is, and lists the files changed since the run started: a new run takes them as its baseline. |
 | `override --max-fix-rounds N --reason T` | open run, N above the rounds used | For the user only. Raises the cap and reactivates an escalated run. |
 | `hook <event>` | from hooks | Internal. |
 
@@ -48,6 +48,9 @@ repository root, which `init` adds to `.git/info/exclude`.
 - **Fix rounds.** Each `fix` after a failed verify or a blocking review uses one round, up to `max_fix_rounds`.
   `subtask add --origin user` and a `fix` after a clean review (to apply non-blocking suggestions) do not; after a
   failed verify or a blocking review, `subtask add` waits until `fix` has counted the round.
+- **User-only commands.** The PreToolUse hook denies `override` and `abort` to the model; the user types them with
+  `!` in the prompt, which skips hooks. Without that, `abort` and then `start` would give the same work fresh fix
+  rounds and make its changes part of the new run's baseline, outside every review.
 - **Independent review.** `review record` needs a `supervise:code-reviewer` whose SubagentStart and SubagentStop
   (same `agent_id`) both came after `review begin`; one that started earlier reviewed an older diff and is refused;
   the hook stores its reply (the report it handed back through `SubagentHandback`, else its final message) and the

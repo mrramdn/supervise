@@ -29,8 +29,8 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   findings itself; `block_on_severity` (default `high`) decides what blocks. A finding with
   `"kind": "acceptance"` (an acceptance criterion not met or not shown) blocks at any severity.
 - **Fix rounds.** `fix` after a failed verify or a blocking review uses a round. When all `max_fix_rounds` are used,
-  the next `fix` escalates the run, and only `override` (typed by the user) continues it. The PreToolUse hook denies
-  `override` to the model. `fix` after a clean review, to apply non-blocking suggestions, uses no round.
+  the next `fix` escalates the run, and only `override` or `abort` (typed by the user) moves it on. The PreToolUse
+  hook denies both to the model. `fix` after a clean review, to apply non-blocking suggestions, uses no round.
 - **Commit.** Off by default. `commit -m` commits the latest accepted run only while the working tree still has the
   accepted fingerprint, with a Conventional Commits message and no AI attribution, through plain `git commit`.
 
@@ -64,6 +64,13 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   After a blocking review, `verify` and `review begin` are refused until `fix`. After either, `subtask add` is
   refused until `fix`, even with `--origin user`, since it would return to IMPLEMENT without a round. Without these,
   the fix cap could be skipped by verifying again or by calling the repair a user request.
+- **`abort` is the user's, like `override`.** An abort followed by `start` gave the same work fresh fix rounds,
+  and the new run took the aborted run's changes as its baseline, so `accept` and `commit` could carry changes no
+  review saw (found in a field test on 2026-11-06). The PreToolUse hook denies `abort` to the model, and the user
+  types it with `!`, which skips hooks (S5). A hook `ask` would let the user approve it in the prompt instead, but
+  `bypassPermissions` skips such prompts, while a deny holds in every mode. The hook matches `abort` only as the
+  subcommand, because tasks, plans, and findings often contain the word. `abort` lists the files changed since the
+  run started, so the user sees what a new run would take as its baseline.
 - **Config is copied at `start`**, so editing `config.toml` mid-run cannot change the gates of that run.
 - **Trust points.** `subtask add --origin user` is the model's claim that the user asked for more; the report
   labels such subtasks. The CLI does not stop a process from editing `.supervise/` by hand. It guards against drift,
@@ -79,12 +86,12 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   `Bash(supervisectl *)`.
 - **S3, S5.** Agents are addressed as `supervise:*`. Review evidence is SubagentStop `agent_type` (canonical, no
   `plugin:` prefix). A user `!` command bypasses PreToolUse, so the hook blocks `override` for the model only, and
-  there is no TTY check.
+  there is no TTY check. 1.0.3 denies `abort` the same way.
 - **S4.** Agents set `model: inherit` and no `effort`.
 - **S8.** The PreToolUse hook uses matcher `Bash` plus `if: "Bash(*supervisectl*)"`, so unrelated Bash calls start
-  no process. It denies `override` whether or not a run is open. The SubagentStop hook has no prefilter: it walks
-  up from the session's cwd to the repository root (sessions opened in a subdirectory), subagent stops are rare,
-  and the report counts every agent. The SubagentStart hook (1.0.1) matches only `^supervise:code-reviewer$`,
+  no process. It denies `override` and `abort` whether or not a run is open. The SubagentStop hook has no prefilter:
+  it walks up from the session's cwd to the repository root (sessions opened in a subdirectory), subagent stops are
+  rare, and the report counts every agent. The SubagentStart hook (1.0.1) matches only `^supervise:code-reviewer$`,
   since only the reviewer's start is evidence.
 - **S9.** `make validate` runs `claude plugin validate --strict` on `plugin.json` (skills, agents, hooks) and on the
   directory (marketplace). `tests/test_plugin_files.py` covers what `--strict` misses. The skill description was
