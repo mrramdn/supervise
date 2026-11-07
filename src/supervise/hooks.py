@@ -28,8 +28,10 @@ ABORT_REASON = (
     "or stop and ask the user; if they drop the task, they can type "
     '`! supervisectl abort --reason "..."` themselves. Afterwards, run `supervisectl status` before continuing.'
 )
-# `abort` as the subcommand, after any options. Tasks, plans, and findings passed to supervisectl often contain
-# the word itself, so a bare mention (as for override) would deny ordinary calls.
+# `override` or `abort` as the subcommand, after any options, matched once quotes and backslashes are removed (so
+# `ov''erride` still counts). Tasks, plans, commit messages, and findings passed to supervisectl often contain the
+# words themselves, so a bare mention would deny ordinary calls.
+_OVERRIDE = re.compile(r"\bsupervisectl(?:\s+-\S*)*\s+override\b")
 _ABORT = re.compile(r"\bsupervisectl(?:\s+-\S*)*\s+abort\b")
 
 
@@ -55,13 +57,16 @@ def _log(state_dir: Path | None, message: str) -> None:
         sys.stderr.write(f"supervise hook: {line}")
 
 
-def mentions_override(command: str) -> bool:
-    flat = re.sub(r"[\"'\\]", "", command)
-    return "supervisectl" in flat and re.search(r"\boverride\b", flat) is not None
+def _unquoted(command: str) -> str:
+    return re.sub(r"[\"'\\]", "", command)
+
+
+def runs_override(command: str) -> bool:
+    return _OVERRIDE.search(_unquoted(command)) is not None
 
 
 def runs_abort(command: str) -> bool:
-    return _ABORT.search(re.sub(r"[\"'\\]", "", command)) is not None
+    return _ABORT.search(_unquoted(command)) is not None
 
 
 def pre_tool_use(data: dict[str, Any]) -> None:
@@ -69,7 +74,7 @@ def pre_tool_use(data: dict[str, Any]) -> None:
     if data.get("tool_name") != "Bash":
         return
     command = str((data.get("tool_input") or {}).get("command", ""))
-    reason = OVERRIDE_REASON if mentions_override(command) else ABORT_REASON if runs_abort(command) else None
+    reason = OVERRIDE_REASON if runs_override(command) else ABORT_REASON if runs_abort(command) else None
     if reason:
         decision = {
             "hookEventName": "PreToolUse",
