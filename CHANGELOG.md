@@ -148,6 +148,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.6]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.5...supervise--v1.0.6
 [1.0.5]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.4...supervise--v1.0.5
 [1.0.4]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.3...supervise--v1.0.4
 [1.0.3]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.2...supervise--v1.0.3

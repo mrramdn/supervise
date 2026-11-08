@@ -1,6 +1,6 @@
 [project]
 name = "supervise"
-version = "1.0.5"
+version = "1.0.6"
 description = "Checkpointed plan, implement, verify, and independent review workflow for Claude Code, with phase rules enforced by a small CLI."
 license = "MIT"
 license-files = ["LICENSE"]
