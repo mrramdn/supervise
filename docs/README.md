@@ -4,6 +4,8 @@ supervise is a Claude Code plugin that runs a coding task through plan, implemen
 rules checked by a small CLI instead of by the prompt. These pages explain how to install it, how a run works, how
 to configure it for your project, and what to do when the CLI refuses a step.
 
+These pages describe supervise 1.0.6.
+
 | Page | Read it when |
 |---|---|
 | [Getting started](getting-started.md) | You want to install supervise and run your first task. |

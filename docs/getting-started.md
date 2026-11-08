@@ -44,8 +44,8 @@ it, so later calls ask again. To stop that, allow the command in your settings, 
 }
 ```
 
-This does not let Claude raise its own fix-round cap: a hook refuses `supervisectl override` from the model whatever
-the permissions say.
+This does not let Claude raise its own fix-round cap or drop a run: a hook refuses `supervisectl override` and
+`supervisectl abort` from the model whatever the permissions say.
 
 ## Your first run
 
@@ -82,23 +82,38 @@ gate of kind `test`, every run is labelled NO TESTS.
 `supervisectl start` runs every gate once, before anything changes:
 
 ```
-Starting run 20260928-121635-4821: 2 baseline gate(s).
+Starting run 20261108-123544-3233: 2 baseline gate(s).
   running lint: make lint
   running test: make test
-Run 20260928-121635-4821 started: add rate limiting to the upload endpoint
+Run 20261108-123544-3233 started: add rate limiting to the upload endpoint
 Baseline (before any change):
   pass              lint       make lint
   pass              test       make test
-next: write the plan, then `supervisectl plan set -` with the plan JSON on stdin
+next: write the plan JSON to `.supervise/plan.json`, then `supervisectl plan set .supervise/plan.json`
 ```
 
 A gate that already fails here is not blamed on the change later, as long as it fails the same way.
 
+Claude then checks that the plugin's agents loaded. It reads the Agent tool's list of agent types; it does not call
+an agent for this. If `supervise:code-reviewer` is missing, it stops and tells you.
+
 ### 3. Plan and implement
 
-Claude splits the task into subtasks with acceptance criteria and records them with `supervisectl plan set`. Then
-it does the work, marking each subtask done as it lands. For a large subtask that is independent of the rest, it
-may hand it to `supervise:implementer`.
+Claude splits the task into subtasks with acceptance criteria. It writes the plan with the Write tool to
+`.supervise/plan.json` and records it. The CLI removes the file once the plan is recorded:
+
+```
+Plan recorded: 2 subtask(s).
+  s1 Add a per-client limiter
+  s2 Return 429 when the limit is hit
+Read and removed .supervise/plan.json.
+next: finish the changes, then `supervisectl verify`
+```
+
+`.supervise/` is not part of the reviewed diff, so the plan file never shows up in the review.
+
+Then Claude does the work and marks each subtask done as it lands, with `supervisectl subtask done s1` (or just
+`1`). For a large subtask that is independent of the rest, it may hand it to `supervise:implementer`.
 
 If you ask for something extra in the middle of the run, Claude records it as a subtask that came from you.
 
@@ -108,17 +123,20 @@ If you ask for something extra in the middle of the run, Claude records it as a 
 a fix round:
 
 ```
+Verify #1: 2 gate(s).
+  running lint: make lint
+  running test: make test
 Verify #1: fail (lint pass, test fail)
   FAIL              test       make test (exit 2)
     | grep -q ok app.txt
-    | make: *** [Makefile:2: test] Error 1
-    full output: /path/to/repo/.supervise/runs/20260928-121635-4821/logs/verify-1-test.log
+    | make: *** [Makefile:5: test] Error 1
+    full output: /path/to/repo/.supervise/runs/20261108-123544-3233/logs/verify-1-test.log
 next: `supervisectl fix` before changing code, then repair what failed
 ```
 
 ```
 Fix round 1/3.
-  to fix: gate test failed: make test (log: .../logs/verify-1-test.log)
+  to fix: gate test failed: make test (log: /path/to/repo/.supervise/runs/20261108-123544-3233/logs/verify-1-test.log)
 next: finish the changes, then `supervisectl verify`
 ```
 
@@ -126,7 +144,8 @@ next: finish the changes, then `supervisectl verify`
 
 After a passing verify, `supervisectl review begin` writes the diff and a brief. Claude starts the read-only
 `supervise:code-reviewer` agent with that brief. The hooks record the reviewer's start and its reply, and
-`supervisectl review record` reads the findings from there, not from Claude:
+`supervisectl review record` reads the findings from there, not from Claude. Claude runs it as soon as the reviewer
+finishes. The command itself waits up to 15 seconds for the hook to record the reply, so no pause is needed first.
 
 ```
 Review #1: clean, independent; 0 blocking, 1 non-blocking
@@ -151,7 +170,7 @@ supervisectl: refused: files changed since the review
 On success:
 
 ```
-ACCEPTED run 20260928-121635-4821: add rate limiting to the upload endpoint
+ACCEPTED run 20261108-123544-3233: add rate limiting to the upload endpoint
 Verify #2: pass (lint pass, test pass)
 Review #1: clean, independent; 0 blocking, 1 non-blocking
 Fix rounds used: 1/3
@@ -177,6 +196,7 @@ accepted tree and refuses a message that is not a Conventional Commit or that ca
 | `/supervise:supervise resume` | Resumes a paused run, from this session or a new one. |
 | `/supervise:supervise report` | Prints the report of the open or latest run. |
 | `! supervisectl override --max-fix-rounds 5 --reason "..."` | Gives an escalated run more fix rounds. Only you can run this. |
+| `! supervisectl abort --reason "..."` | Drops the open run and leaves the files as they are. Only you can run this. |
 
 The state lives in `.supervise/` at the repository root, so a run survives a closed terminal. Before you end a
 session in the middle of a run, ask Claude to pause it; any later session picks it up with `resume`.

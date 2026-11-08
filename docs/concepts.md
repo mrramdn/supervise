@@ -16,7 +16,7 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 
 | Phase | What happens | Moves on with |
 |---|---|---|
-| PLAN | Claude reads the code and writes subtasks with acceptance criteria. | `plan set` |
+| PLAN | Claude reads the code and writes subtasks with acceptance criteria to `.supervise/plan.json`. | `plan set` |
 | IMPLEMENT | Claude changes the code and marks subtasks done. | `verify` |
 | VERIFY | The gates ran on the current tree. | `review begin` after a pass, `fix` after a failure |
 | REVIEW | The read-only reviewer is looking at the diff. | `review record`, then `accept` or `fix` |
@@ -24,7 +24,7 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 | ACCEPT | The run is done. | `commit`, only if you ask |
 
 A run is also in one of these states: active, paused (resumable from any session), escalated (out of fix rounds,
-waiting for you), accepted, or aborted. One run is open per repository at a time.
+waiting for you), accepted, or aborted (dropped by you). One run is open per repository at a time.
 
 ## Gates and the baseline
 
@@ -58,6 +58,11 @@ commits, so committing does not change it.
 the review, even one line, means verify and review again. This is the rule that stops "one small fix after the
 review" from landing untested and unreviewed.
 
+Some git setups can hide an edit from `git add -A`, so the fingerprint would miss it. supervise refuses them rather
+than trust an incomplete fingerprint: a sparse checkout, and tracked files marked `assume-unchanged` or
+`skip-worktree`. The CLI leaves your checkout and index as they are. See
+[Troubleshooting](troubleshooting.md#the-working-tree) for how to clear them.
+
 ## Independent review
 
 `review begin` writes the diff since the run started to `.supervise/runs/<id>/review-<n>.diff` and prints a brief:
@@ -73,15 +78,23 @@ A review counts as independent only when the hooks saw a `supervise:code-reviewe
   them on the way.
 
 The reviewer ends its reply with a JSON object, `{"findings": [...]}`, one entry per finding with a file, a line,
-a severity, and a summary. If a reply has no such JSON, Claude may copy the findings into
-`review record --findings -`. The review is then marked transcribed, and the reviewer's reply is saved next to the
-diff so you can compare the two.
+a severity, and a summary. If a reply has no such JSON, `review record` refuses. Claude then copies every finding
+from the reply, as written, into `.supervise/findings.json` and runs
+`review record --findings .supervise/findings.json`. The review is marked transcribed, and the reviewer's reply is
+saved next to the diff so you can compare the two. The CLI removes the findings file once it is recorded.
 
 ### Self-review
 
 For a diff of at most 10 lines, with no binary files, since the last independent review, Claude may review the
-change itself with `review record --self --reason "..."`. The size is measured from the last independent review, so
-a chain of small self-reviews cannot replace a real one. The report lists every self-review.
+change itself. It writes its findings to `.supervise/findings.json` and runs
+`review record --self --reason "..." --findings .supervise/findings.json`. The size is measured from the last
+independent review, so a chain of small self-reviews cannot replace a real one. The report lists every self-review.
+
+### Agents and models
+
+Both agents, `supervise:code-reviewer` and `supervise:implementer`, run on the session's model and effort. Claude
+picks a model and effort for them only when your instructions ask it to, for example in `CLAUDE.md`. Then it fits
+the implementer's to the subtask, and never gives the reviewer a weaker model than the one that wrote the change.
 
 ### What blocks
 
@@ -109,8 +122,21 @@ continue it, by typing the override in the prompt with the `!` prefix:
 ! supervisectl override --max-fix-rounds 5 --reason "flaky test fixed upstream, one more try"
 ```
 
-A PreToolUse hook denies `supervisectl override` to the model. Commands you type with `!` do not pass through that
-hook.
+A PreToolUse hook denies `supervisectl override` to the model. It matches `override` only as the subcommand, so a
+task, plan, or commit message that uses the word still goes through. Commands you type with `!` do not pass through
+that hook.
+
+## Dropping a run
+
+Only you can drop a run, by typing:
+
+```
+! supervisectl abort --reason "the task is no longer needed"
+```
+
+The hook denies `abort` to the model, the same way as `override`. Otherwise a stuck run could start over: a new run
+gets fresh fix rounds and takes the files the old run changed as its baseline, so no review would see them. `abort`
+leaves the working tree as it is and lists the files changed since the run started.
 
 ## Requests in the middle of a run
 
@@ -135,6 +161,7 @@ under a short lock of their own, so a long `verify` never blocks them.
 ## What supervise does not do
 
 - It guards against drift, not against a hostile agent. Nothing stops a process from editing `.supervise/` by hand.
+- It does not work in a sparse checkout, or with tracked files marked `assume-unchanged` or `skip-worktree`.
 - Gate output is stored as is, in `state.json` (the last 50 lines) and under `logs/`. Secrets that a gate prints are
   not redacted.
 - It runs one task at a time. For many agents in parallel, or a full development methodology, see

@@ -30,13 +30,17 @@ timeout = 1800
 | `block_on_severity` | `"high"` | Review findings at or above this severity block `accept`. Acceptance findings block at any severity. |
 | `gates` | detected | The checks that run at `start` and at every `verify`, in order. |
 
+`gates` must be an array of tables, one `[[gates]]` block per gate. A plain value such as `gates = "make test"`, or
+a single `[gates]` table, is refused with exit 2 before a run starts. With no `gates` at all, or `gates = []`, runs
+start and are labelled NO TESTS.
+
 Each gate:
 
 | Key | Meaning |
 |---|---|
 | `name` | A short label used in output, logs, and the report. |
 | `command` | Run through `/bin/sh` from the repository root, with your environment. Passes on exit 0. |
-| `kind` | `test`, `lint`, `typecheck`, `build`, or `other`. Without a `test` gate, runs are labelled NO TESTS. |
+| `kind` | `test`, `lint`, `typecheck`, `build`, or `other` (the default). Without a `test` gate, runs are labelled NO TESTS. |
 | `timeout` | Seconds before the gate and its child processes are stopped; a gate that times out fails. Default 1800. |
 
 ## What `init` detects
@@ -126,6 +130,8 @@ block_on_severity = "medium"
   config.toml                  project config (copied into each run at start)
   current                      id of the open run
   lock                         write lock
+  plan.json                    plan input for `plan set`, removed once recorded
+  findings.json                findings input for `review record --findings`, removed once recorded
   runs/<id>/state.json         run state and history
   runs/<id>/events.jsonl       subagent starts and stops recorded by the hooks
   runs/<id>/logs/              full gate output per baseline and verify

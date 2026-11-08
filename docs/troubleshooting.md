@@ -23,23 +23,55 @@ the project's own repository.
 **Every `supervisectl` call asks for permission**
 Allow `Bash(supervisectl *)` in your settings. See [Getting started](getting-started.md#allow-supervisectl-once).
 
+**Claude asks for permission every time it records a plan or findings**
+Passing JSON to a command in a heredoc makes Claude Code ask on every call, even with `Bash(supervisectl *)`
+allowed. Since 1.0.5 the skill writes the JSON to `.supervise/plan.json` or `.supervise/findings.json` with the
+Write tool and passes the path instead. If you still see this, update the plugin.
+
 **Claude says the plugin's agents did not load**
-The skill stops when the Agent tool does not offer `supervise:code-reviewer`, because only that agent's review
-counts. Check that the plugin is enabled (`claude plugin list`), then start a new session.
+After `start`, the skill reads the Agent tool's list of agent types, without calling an agent. It stops when
+`supervise:code-reviewer` is not in the list, because only that agent's review counts. Check that the plugin is
+enabled (`claude plugin list`), then start a new session.
 
 **`/supervise` runs a different skill**
 Another skill named `supervise` is installed, for example in `~/.claude/skills/`. Use the full name
 `/supervise:supervise`.
 
 **`supervisectl: command not found` in your own terminal**
-Claude Code puts `supervisectl` on PATH only for its own Bash calls. From your terminal, type commands in the
-Claude Code prompt with the `!` prefix, or call the launcher by its path in the plugin folder.
+Claude Code puts `supervisectl` on PATH only for its own Bash calls. Type commands in the Claude Code prompt with
+the `!` prefix instead, as in `! supervisectl status`. You can also call the launcher by its path in the plugin
+folder, but that path changes with every plugin version.
+
+**`the supervise config is invalid`**
+The next lines name the file and the problem. For example, `gates must be an array of tables ([[gates]])` means
+`gates` is a plain value or a single `[gates]` table. Write one `[[gates]]` block per gate (see
+[Configuration](configuration.md)). With no gates at all, leave `gates` out or write `gates = []`.
+
+## The working tree
+
+**`sparse checkout is not supported`**
+In a sparse checkout, the files outside it are missing, so supervise cannot fingerprint the whole tree. Switch to a
+full checkout with `git sparse-checkout disable`, then retry.
+
+**`git index flags hide tracked files from verification`**
+Some tracked files are marked `assume-unchanged` or `skip-worktree`, and the message lists up to ten of them. With
+those flags, git can skip an edit to the file, so a change after the review could go unnoticed. `git ls-files -v`
+shows them with a lowercase letter (assume-unchanged) or `S` (skip-worktree). Clear the flags, then retry:
+
+```sh
+git update-index --no-assume-unchanged -- <files>
+git update-index --no-skip-worktree -- <files>
+```
+
+Both refusals come from any command that fingerprints the tree, such as `start`, `verify`, `review begin`, and
+`accept`. The CLI does not change your checkout or index.
 
 ## Starting a run
 
 **`run <id> is still open (...)`**
-Only one run is open per repository. Finish it (`/supervise:supervise status` shows the next step), or drop it
-with `supervisectl abort --reason "..."`.
+Only one run is open per repository. Finish it (`/supervise:supervise status` shows the next step), or drop it by
+typing `! supervisectl abort --reason "..."` in the Claude Code prompt. Claude cannot drop it for you: a hook denies
+`abort` to the model.
 
 **The baseline already fails**
 That is fine. A gate that fails at `start` passes at `verify` if it fails in exactly the same way. If the failure
@@ -80,8 +112,8 @@ reviewer with the brief from the last `review begin`.
 
 **`the supervise:code-reviewer reply has no findings JSON`**
 The reviewer did not end its reply with `{"findings": [...]}`. Claude copies every finding from the reply, as
-written, into `supervisectl review record --findings -`. The review is marked transcribed and the reply is saved as
-`review-N-reply.md` so you can compare them.
+written, into `.supervise/findings.json` and runs `supervisectl review record --findings .supervise/findings.json`.
+The review is marked transcribed and the reply is saved as `review-N-reply.md` so you can compare them.
 
 **`files changed since \`review begin\``** or **`files changed since the review`**
 Something edited the tree after the review started. Verify and review again. Keep files untouched from
@@ -105,7 +137,13 @@ the Claude Code prompt:
 ! supervisectl override --max-fix-rounds 5 --reason "why more rounds are worth it"
 ```
 
-The new cap must be above the rounds already used. Claude cannot run this command: a hook denies it.
+The new cap must be above the rounds already used. Claude cannot run this command: a hook denies it. To stop
+instead, type `! supervisectl abort --reason "..."`.
+
+**A hook denies Claude's `supervisectl` call**
+The PreToolUse hook denies `override` and `abort` to the model. It matches them only as the subcommand, so
+`supervisectl start "let users override the theme"` goes through. If an ordinary call that only mentions the word
+`override` is denied, the plugin is older than 1.0.4: update it.
 
 ## Accept and commit
 
@@ -137,3 +175,4 @@ Only one command may change the state at a time, for example while a long `verif
 - `supervisectl report` shows the plan, gates, reviews, subagents, and the history of every phase change.
 - `.supervise/runs/<id>/logs/` holds the full output of every gate run.
 - `.supervise/runs/<id>/events.jsonl` holds the subagent starts and stops the hooks recorded.
+- `.supervise/hook.log` holds errors from the subagent hooks, if any. A hook error never stops the session.
