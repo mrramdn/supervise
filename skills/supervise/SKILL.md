@@ -22,8 +22,9 @@ step, and nothing was changed, so follow its output rather than working around i
      "verified" means, so let the user correct `.supervise/config.toml` before starting.
 2. `supervisectl start "<task>"` runs the gates once to record the baseline: what already fails before you touch
    anything.
-3. Check that the Agent tool offers `supervise:code-reviewer` (and `supervise:implementer`). If it does not, stop
-   and tell the user the plugin's agents did not load. Do not substitute `general-purpose` or another agent: only
+3. Check that the Agent tool's list of agent types includes `supervise:code-reviewer` (and
+   `supervise:implementer`); reading the list is enough, without calling an agent. If it is missing, stop and tell
+   the user the plugin's agents did not load. Do not substitute `general-purpose` or another agent: only
    a finished `supervise:code-reviewer` counts as a review, so a substitute would only waste a round.
 
 If every `supervisectl` call asks for permission, suggest the user allow `Bash(supervisectl *)` in their
@@ -47,20 +48,24 @@ Copy this into your task list and keep it current:
 
 Say one sentence of progress at every phase change.
 
-**Plan.** Read what you need, then split the task into subtasks with acceptance criteria. Pass the plan on stdin
-so no plan file lands in the working tree (it would become part of the reviewed diff):
+**Plan.** Read what you need, then split the task into subtasks with acceptance criteria. Write the plan with the
+Write tool to `.supervise/plan.json`, which stays out of the reviewed diff, as
+`{"summary": "...", "subtasks": [{"title": "...", "acceptance": "..."}]}`, and record it:
 
 ```bash
-supervisectl plan set - <<'EOF'
-{"summary": "...", "subtasks": [{"title": "...", "acceptance": "..."}]}
-EOF
+supervisectl plan set .supervise/plan.json
 ```
 
-**Implement.** Do the work yourself. Spawn `supervise:implementer` only for a large subtask that is independent of
-the rest, and give it the subtask, the files involved, and the acceptance criteria. Run the relevant tests as you
-go. Mark progress with `supervisectl subtask done <id>`. If the user asks for something new mid-run, record it
-with `supervisectl subtask add "<title>" --origin user`; that returns the run to implementing without using a
-fix round. After a failed verify or a blocking review, run `supervisectl fix` first and add it in that round.
+The CLI removes the file once the plan is recorded. Don't pass JSON in a heredoc: Claude Code asks for permission
+on every such command.
+
+**Implement.** Do the work yourself. Spawn `supervise:implementer` only for a large subtask that is independent of the
+rest, and give it the subtask, the files involved, and the acceptance criteria. It runs on this session's model and
+effort unless you pass `model` and `effort`; when the user's instructions ask you to choose them, fit them to the
+subtask. Run the relevant tests as you go. Mark progress with `supervisectl subtask done <id>`. If the user asks for
+something new mid-run, record it with `supervisectl subtask add "<title>" --origin user`; that returns the run to
+implementing without using a fix round. After a failed verify or a blocking review, run `supervisectl fix` first and
+add it in that round.
 
 **Verify.** `supervisectl verify` runs every gate and compares failures with the baseline. It takes as long as the
 project's checks, so give the Bash call a timeout above their run time. If the timeout runs out first, Claude Code
@@ -71,15 +76,18 @@ unchanged.
 
 **Review.** `supervisectl review begin` writes the diff and prints a brief. Call the Agent tool with
 `subagent_type: "supervise:code-reviewer"` and that brief; a reviewer started before this `review begin` read an
-older diff and does not count. When it finishes, run `supervisectl review record`; the CLI reads the reviewer's
-findings from the hook (waiting a few seconds for the hook if needed) and decides which ones block. If it refuses
-because the reply has no findings JSON, copy every finding from the reviewer's reply, as written, into
-`supervisectl review record --findings -`; the report marks the review as transcribed and keeps the reply. Do not
-act on findings before they are recorded. Keep your hands off the files from `review begin` until `accept`: any
-edit changes the tree fingerprint and accept will refuse.
-A diff of at most 10 lines since the last independent review may be reviewed by you instead:
-`supervisectl review record --self --reason "<why>" --findings -` with `{"findings": [...]}` on stdin. The report
-lists every self-review.
+older diff and does not count. It too runs on this session's model and effort unless you pass them. If you choose
+them, give the reviewer a model at least as strong as the one that wrote the change, and enough effort for the
+diff. When it finishes, run `supervisectl review record` right away: it reads the reviewer's findings from the
+hook, waiting up to 15 seconds for them itself, and decides which ones block. If it refuses because the reply has
+no findings JSON, copy every finding from the reviewer's reply, as written, into `.supervise/findings.json` as
+`{"findings": [...]}` and run `supervisectl review record --findings .supervise/findings.json`; the report marks
+the review as transcribed and keeps the reply. Do not act on findings before they are recorded. Keep your hands
+off the files from `review begin` until `accept`: any edit changes the tree fingerprint and accept will refuse.
+A diff of at most 10 lines since the last independent review may be reviewed by you instead: write your
+`{"findings": [...]}` to `.supervise/findings.json` and run
+`supervisectl review record --self --reason "<why>" --findings .supervise/findings.json`. The report lists every
+self-review.
 
 **Fix.** After a failed verify or a blocking review, run `supervisectl fix` before you change code. It counts the
 fix round and lists what to repair. Then repair, `verify`, and review again.

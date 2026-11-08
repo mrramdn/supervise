@@ -71,6 +71,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
   `bypassPermissions` skips such prompts, while a deny holds in every mode. The hook matches `abort`, and since
   1.0.4 `override`, only as the subcommand, because tasks, plans, and findings often contain the words. `abort`
   lists the files changed since the run started, so the user sees what a new run would take as its baseline.
+- **JSON goes in through files in `.supervise/`.** Since 1.0.5 the skill writes plans and findings to
+  `.supervise/plan.json` and `.supervise/findings.json` instead of piping a heredoc: Claude Code asks for permission
+  on a Bash command with a brace next to a quote, whatever the allow rules say (found in a smoke test on
+  2026-11-08). The fingerprint and the diff leave `.supervise/` out, and the CLI removes the file once recorded.
 - **Config is copied at `start`**, so editing `config.toml` mid-run cannot change the gates of that run.
 - **Trust points.** `subtask add --origin user` is the model's claim that the user asked for more; the report
   labels such subtasks. The CLI does not stop a process from editing `.supervise/` by hand. It guards against drift,
@@ -87,7 +91,10 @@ init -> start -> PLAN -> IMPLEMENT -> VERIFY -> REVIEW -> ACCEPT
 - **S3, S5.** Agents are addressed as `supervise:*`. Review evidence is SubagentStop `agent_type` (canonical, no
   `plugin:` prefix). A user `!` command bypasses PreToolUse, so the hook blocks `override` for the model only, and
   there is no TTY check. 1.0.3 denies `abort` the same way.
-- **S4.** Agents set `model: inherit` and no `effort`.
+- **S4.** Agents set `model: inherit` and no `effort`. The Agent tool has since gained an `effort` parameter, so
+  since 1.0.5 the skill lets the orchestrator pass `model` and `effort` per call when the user's instructions ask for
+  a choice, with one limit: the reviewer never gets a weaker model than the one that wrote the change. Without such
+  instructions both agents still run on the session's model and effort.
 - **S8.** The PreToolUse hook uses matcher `Bash` plus `if: "Bash(*supervisectl*)"`, so unrelated Bash calls start
   no process. It denies `override` and `abort` whether or not a run is open. The SubagentStop hook has no prefilter:
   it walks up from the session's cwd to the repository root (sessions opened in a subdirectory), subagent stops are

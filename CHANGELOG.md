@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-11-08
+
+### Fixed
+
+- In Claude Code's default permission mode, the skill's way of recording a plan asked for permission every time,
+  even with `Bash(supervisectl *)` allowed: a Bash heredoc that holds JSON trips Claude Code's check for a brace
+  next to a quote. The same went for transcribed and self-review findings. The skill now has the model write the
+  JSON with the Write tool to `.supervise/plan.json` or `.supervise/findings.json` and pass that path. The CLI
+  removes such a file once it is recorded, so the next run's Write doesn't hit a file the session hasn't read.
+  `.supervise/` stays out of the tree fingerprint and the reviewed diff, and stdin (`-`) still works.
+
+### Changed
+
+- `supervisectl subtask done 1` means `s1`; models tend to write the number.
+- The skill says to check that the plugin's agents loaded by reading the Agent tool's list, not by calling an
+  agent, and that `review record` waits for the reviewer's hook itself, so it needs no `sleep` first.
+- The skill says how to pick `model` and `effort` for the agents when the user's instructions ask for a choice: an
+  implementer's fit its subtask, and the reviewer never gets a weaker model than the one that wrote the change.
+  Without such instructions both agents still run on the session's model and effort, as before.
+
 ## [1.0.4] - 2026-11-07
 
 ### Added
@@ -118,6 +138,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   review evidence.
 - End-to-end tests of the core rules, a commit message checker, and CI on Python 3.11.
 
+[1.0.5]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.4...supervise--v1.0.5
 [1.0.4]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.3...supervise--v1.0.4
 [1.0.3]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.2...supervise--v1.0.3
 [1.0.2]: https://github.com/mrramdn/supervise/compare/supervise--v1.0.1...supervise--v1.0.2
