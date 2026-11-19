@@ -21,6 +21,12 @@ supervise started as a markdown skill I used to run plan → implement → revie
 
 Each row is covered by an end-to-end test in `tests/` that drives the real CLI in a temporary git repository.
 
+## Status
+
+Stable for daily use: 1.0.5, used on real projects in Claude Code. Every rule above has an end-to-end test, and CI
+runs lint and the tests on Linux and macOS with Python 3.11 to 3.14. It is a one-person project, so expect changes
+to follow Claude Code releases. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Quickstart
 
 Requirements: Claude Code 2.1.280 or newer, git, and Python 3.11 or newer on Linux or macOS. The CLI uses the
